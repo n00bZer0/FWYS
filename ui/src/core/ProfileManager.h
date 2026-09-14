@@ -44,6 +44,10 @@ struct Profile {
     // Full fingerprint JSON (75+ params)
     QJsonObject fingerprintData;
 
+    // Cookies & Extensions
+    QString cookies = "[]";
+    QString extensions = "[]";
+
     // Metadata
     int     status = 0;         // 0=idle 1=running 2=error
     QString createdAt;
@@ -83,6 +87,12 @@ public:
     Q_INVOKABLE bool        setFingerprintKey(const QString& profileId,
                                               const QString& key,
                                               const QJsonValue& value);
+
+    // ── Cookies & Extensions ──
+    Q_INVOKABLE QString     getCookies(const QString& id);
+    Q_INVOKABLE bool        saveCookies(const QString& id, const QString& cookies);
+    Q_INVOKABLE QString     getExtensions(const QString& id);
+    Q_INVOKABLE bool        saveExtensions(const QString& id, const QString& extensions);
 
     // ── Status ──
     Q_INVOKABLE void setProfileStatus(const QString& id, int status);

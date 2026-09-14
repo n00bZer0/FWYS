@@ -4,15 +4,25 @@
 #include <QSqlRecord>
 #include <QStandardPaths>
 #include <QDir>
+#include <QCoreApplication>
 #include <QDebug>
 #include <QJsonValue>
 
 DatabaseManager::DatabaseManager(QObject* parent) : QObject(parent)
 {
-    // Store DB in project root /profiles/
-    QString appDir = QDir::currentPath();
-    m_dataPath  = appDir + "/../profiles";
-    m_dbPath    = m_dataPath + "/profiles.db";
+    // Check if running in portable standalone mode (profiles adjacent to exe)
+    QString appDir = QCoreApplication::applicationDirPath();
+    if (QDir(appDir + "/profiles").exists()) {
+        m_dataPath = appDir + "/profiles";
+    } else if (QDir(appDir + "/../profiles").exists()) {
+        m_dataPath = appDir + "/../profiles";
+    } else if (QDir(QDir::currentPath() + "/../profiles").exists()) {
+        m_dataPath = QDir::currentPath() + "/../profiles";
+    } else {
+        m_dataPath = appDir + "/profiles";
+    }
+
+    m_dbPath = m_dataPath + "/profiles.db";
     QDir().mkpath(m_dataPath);
     QDir().mkpath(m_dataPath + "/user_data");
 }
@@ -84,6 +94,10 @@ void DatabaseManager::createSchema()
 
             -- Full fingerprint JSON blob (75+ params)
             fingerprint_data    TEXT DEFAULT '{}',
+
+            -- Cookies & Extensions
+            cookies             TEXT DEFAULT '[]',
+            extensions          TEXT DEFAULT '[]',
 
             -- Metadata
             status              INTEGER DEFAULT 0,
@@ -162,6 +176,8 @@ void DatabaseManager::migrateSchema()
         { "os_type",         "TEXT DEFAULT 'windows10'" },
         { "browser_version", "TEXT DEFAULT 'auto'" },
         { "fingerprint_data","TEXT DEFAULT '{}'" },
+        { "cookies",         "TEXT DEFAULT '[]'" },
+        { "extensions",      "TEXT DEFAULT '[]'" },
     };
 
     for (const auto& m : migrations) {

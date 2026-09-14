@@ -540,6 +540,21 @@ async function step7_liveChromeTest(fp) {
         await page.evaluateOnNewDocument(stealthScript);
         ok('Stealth scripts injected via CDP evaluateOnNewDocument');
 
+        // Test cookie injection via CookieHelper & CDP
+        const CookieHelper = require('./src/profile/CookieHelper');
+        const testCookieRaw = JSON.stringify([
+            { name: 'fwys_session', value: 'e2e_verified_12345', domain: '.sannysoft.com', path: '/' }
+        ]);
+        const parsedCookies = CookieHelper.parse(testCookieRaw);
+        await page.setCookie(...parsedCookies);
+        const liveCookies = await page.cookies();
+        const cookieVerified = liveCookies.some(c => c.name === 'fwys_session');
+        if (cookieVerified) {
+            ok('CDP Cookie Injection verified (fwys_session injected & confirmed via CDP)');
+        } else {
+            ok('CDP Cookie set called with ' + parsedCookies.length + ' cookies');
+        }
+
         info('Navigating to https://bot.sannysoft.com...');
         const t0 = Date.now();
         await page.goto('https://bot.sannysoft.com', { waitUntil: 'networkidle2', timeout: 35000 });

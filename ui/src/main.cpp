@@ -12,6 +12,7 @@
 #include "core/ProxyManager.h"
 #include "core/FingerprintConfig.h"
 #include "core/DatabaseManager.h"
+#include "core/IPCClient.h"
 #include "models/ProfileListModel.h"
 
 #include <QFile>
@@ -70,6 +71,8 @@ int main(int argc, char *argv[])
     ProxyManager proxyManager;
     BrowserLauncher launcher(&profileManager, &db);
     FingerprintConfig fingerprintConfig;
+    IPCClient ipcClient;
+    ipcClient.connectToServer();
 
     // QML models
     ProfileListModel profileModel(&profileManager);
@@ -82,6 +85,7 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty("proxyManager", &proxyManager);
     engine.rootContext()->setContextProperty("browserLauncher", &launcher);
     engine.rootContext()->setContextProperty("fingerprintConfig", &fingerprintConfig);
+    engine.rootContext()->setContextProperty("ipcClient", &ipcClient);
     engine.rootContext()->setContextProperty("profileModel", &profileModel);
 
     // App version info

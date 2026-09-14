@@ -18,6 +18,8 @@ const ProfileReader      = require('./profile/ProfileReader');
 const FingerprintGenerator = require('./profile/FingerprintGenerator');
 const { testProxy }      = require('./profile/iptest');
 const { generateFingerprint } = require('./profile/generator');
+const ProxyTunnel        = require('./proxy/ProxyTunnel');
+const CookieHelper       = require('./profile/CookieHelper');
 
 const TEST_MODE = process.argv.includes('--test');
 
@@ -36,6 +38,19 @@ async function main() {
 
   const ipc = new IPCServer();
   await ipc.start();
+
+  // ── Setup authenticated proxy tunnel ─────────────────────────────────────
+  ipc.on('setup_proxy_tunnel', async (payload) => {
+    const { profileId, localPort, proxyType, proxyHost, proxyPort } = payload;
+    console.log(`  [IPC] setup_proxy_tunnel: profile=${profileId}, localPort=${localPort} -> ${proxyType}://${proxyHost}:${proxyPort}`);
+    try {
+      await ProxyTunnel.createTunnel(payload);
+      ipc.send('proxy_tunnel_ready', { profileId, localPort, success: true });
+    } catch (err) {
+      console.error('  [ERROR] Proxy tunnel setup failed:', err.message);
+      ipc.send('proxy_tunnel_ready', { profileId, localPort, success: false, error: err.message });
+    }
+  });
 
   // ── Launch browser with profile ──────────────────────────────────────────
   ipc.on('launch_profile', async (payload) => {
@@ -60,6 +75,7 @@ async function main() {
   ipc.on('close_profile', async (payload) => {
     const { profileId } = payload;
     CDPManager.closeProfile(profileId);
+    ProxyTunnel.closeTunnel(profileId);
     ipc.send('close_result', { profileId, success: true });
   });
 
@@ -70,20 +86,70 @@ async function main() {
   //   3. We connect CDP and inject JS stealth scripts
   //   4. All C++ + JS patches now active
   ipc.on('attach_cdp', async (payload) => {
-    const { profileId, debugPort, fingerprint } = payload;
+    const { profileId, debugPort, fingerprint, cookies } = payload;
     console.log(`  [IPC] attach_cdp: profile=${profileId}, port=${debugPort}`);
 
     try {
-      const session = await CDPManager.attachOnly(profileId, debugPort, fingerprint);
+      let cookiesToInject = [];
+      if (Array.isArray(cookies)) {
+        cookiesToInject = cookies;
+      } else if (typeof cookies === 'string' && cookies.trim()) {
+        cookiesToInject = CookieHelper.parse(cookies);
+      }
+
+      const session = await CDPManager.attachOnly(profileId, debugPort, fingerprint, cookiesToInject);
 
       ipc.send('cdp_attached', {
         profileId,
         success: true,
         pid:     session.pid || 0,
+        cookiesInjected: cookiesToInject.length,
       });
     } catch (err) {
       console.error('  [ERROR] CDP attach failed:', err.message);
       ipc.send('cdp_attached', {
+        profileId,
+        success: false,
+        error:   err.message,
+      });
+    }
+  });
+
+  // ── Parse cookies (JSON or Netscape) ───────────────────────────────────
+  ipc.on('parse_cookies', async (payload) => {
+    const { raw } = payload;
+    try {
+      const parsed = CookieHelper.parse(raw);
+      ipc.send('cookies_parsed', {
+        success:  true,
+        count:    parsed.length,
+        cookies:  parsed,
+        json:     CookieHelper.toJson(parsed),
+        netscape: CookieHelper.toNetscape(parsed),
+      });
+    } catch (err) {
+      ipc.send('cookies_parsed', {
+        success: false,
+        error:   err.message,
+      });
+    }
+  });
+
+  // ── Extract cookies from running browser ──────────────────────────────
+  ipc.on('get_cookies', async (payload) => {
+    const { profileId } = payload;
+    try {
+      const cookies = await CDPManager.getCookies(profileId);
+      ipc.send('cookies_extracted', {
+        profileId,
+        success:  true,
+        count:    cookies.length,
+        cookies:  cookies,
+        json:     CookieHelper.toJson(cookies),
+        netscape: CookieHelper.toNetscape(cookies),
+      });
+    } catch (err) {
+      ipc.send('cookies_extracted', {
         profileId,
         success: false,
         error:   err.message,
@@ -160,6 +226,20 @@ async function runTests() {
         if (!fp.navigator || !fp.screen || !fp.gpu) throw new Error('Missing fields');
         if (fp.navigator.webdriver !== false) throw new Error('webdriver must be false');
     }},
+    { name: 'ProxyTunnel',       fn: async () => {
+        const port = await ProxyTunnel.createTunnel({
+          profileId: 'selftest_tunnel',
+          localPort: 29876,
+          proxyType: 'http',
+          proxyHost: '127.0.0.1',
+          proxyPort: 8080,
+          proxyUser: 'user',
+          proxyPass: 'pass'
+        });
+        if (port !== 29876) throw new Error('Port mismatch');
+        ProxyTunnel.closeTunnel('selftest_tunnel');
+    }},
+    { name: 'CookieHelper',      fn: () => CookieHelper.selfTest() },
   ];
 
   let passed = 0;

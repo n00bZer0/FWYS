@@ -18,11 +18,12 @@ const StealthLoader = require('../stealth/StealthLoader');
 const sessions = new Map();
 
 class CDPManager {
-  constructor(profileId, chromiumPath, debugPort, fingerprint) {
+  constructor(profileId, chromiumPath, debugPort, fingerprint, cookies = []) {
     this.profileId    = profileId;
     this.chromiumPath = chromiumPath;
     this.debugPort    = debugPort;
     this.fingerprint  = fingerprint || {};
+    this.cookies      = Array.isArray(cookies) ? cookies : [];
     this.browser      = null;
     this.pid          = null;
   }
@@ -36,8 +37,8 @@ class CDPManager {
   }
 
   // ── Mode 2: attach-only (Qt launched Chrome, we just attach CDP) ───────
-  static async attachOnly(profileId, debugPort, fingerprint) {
-    const mgr = new CDPManager(profileId, null, debugPort, fingerprint);
+  static async attachOnly(profileId, debugPort, fingerprint, cookies = []) {
+    const mgr = new CDPManager(profileId, null, debugPort, fingerprint, cookies);
     await mgr._connectAndInject();
     sessions.set(profileId, mgr);
     console.log(`  [CDP] ✓ Attached to profile ${profileId} on port ${debugPort}`);
@@ -124,6 +125,16 @@ class CDPManager {
       await applyToPage(p);
     }
 
+    // Inject cookies into active page if provided
+    if (this.cookies.length > 0 && pages.length > 0) {
+      try {
+        await pages[0].setCookie(...this.cookies);
+        console.log(`  [CDP] ✓ Injected ${this.cookies.length} cookies into profile ${this.profileId}`);
+      } catch (err) {
+        console.warn(`  [CDP] Cookie injection warning:`, err.message);
+      }
+    }
+
     // Automatically apply to any newly created tab/window
     this.browser.on('targetcreated', async (target) => {
       if (target.type() === 'page') {
@@ -140,6 +151,21 @@ class CDPManager {
     });
 
     console.log(`  [Stealth] ✓ All patches injected for profile ${this.profileId}`);
+  }
+
+  // ── Extract cookies from browser ──────────────────────────────────────
+  static async getCookies(profileId) {
+    const session = sessions.get(profileId);
+    if (!session || !session.browser) return [];
+    try {
+      const pages = await session.browser.pages();
+      if (pages.length > 0) {
+        return await pages[0].cookies();
+      }
+    } catch (e) {
+      console.warn(`  [CDP] getCookies error:`, e.message);
+    }
+    return [];
   }
 
   // ── Close session ─────────────────────────────────────────────────────

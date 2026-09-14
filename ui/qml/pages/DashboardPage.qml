@@ -170,7 +170,7 @@ Item {
         Rectangle {
             Layout.fillWidth: true
             height: 40; radius: 10; color: surface
-            border.color: searchField.activeFocus ? accent : borderColor
+            border.color: searchField.activeFocus ? accent : border
 
             Row {
                 anchors { verticalCenter: parent.verticalCenter
@@ -344,7 +344,7 @@ Item {
         modal: true
         background: Rectangle {
             color: bgCard; radius: 16
-            border.color: borderColor; border.width: 1
+            border.color: border; border.width: 1
         }
 
         header: Item {
@@ -366,7 +366,7 @@ Item {
             Text { text: "Profile Name"; color: textSub; font.pixelSize: 12 }
             Rectangle {
                 width: 380; height: 40; radius: 8
-                color: surface; border.color: nameField.activeFocus ? accent : borderColor
+                color: surface; border.color: nameField.activeFocus ? accent : border
                 TextField {
                     id: nameField
                     anchors { fill: parent; margins: 1 }
@@ -397,7 +397,7 @@ Item {
                                ? Qt.rgba(0.42, 0.39, 1.0, 0.2)
                                : surface
                         border.color: osSelector.selected === modelData.value
-                                      ? accent : borderColor
+                                      ? accent : border
                         border.width: osSelector.selected === modelData.value ? 1.5 : 1
                         Text {
                             anchors.centerIn: parent
@@ -420,7 +420,7 @@ Item {
             Text { text: "Proxy (optional)"; color: textSub; font.pixelSize: 12 }
             Rectangle {
                 width: 380; height: 40; radius: 8
-                color: surface; border.color: proxyField.activeFocus ? accent : borderColor
+                color: surface; border.color: proxyField.activeFocus ? accent : border
                 TextField {
                     id: proxyField
                     anchors { fill: parent; margins: 1 }
@@ -496,7 +496,7 @@ Item {
         anchors.centerIn: parent; width: 360; modal: true
         background: Rectangle {
             color: bgCard; radius: 16
-            border.color: borderColor; border.width: 1
+            border.color: border; border.width: 1
         }
         contentItem: Column {
             spacing: 16; padding: 24

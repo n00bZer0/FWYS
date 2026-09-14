@@ -4,6 +4,7 @@
 
 #include <QDir>
 #include <QFileInfo>
+#include <QCoreApplication>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -216,6 +217,24 @@ QStringList BrowserLauncher::buildChromiumArgs(const QJsonObject& profile, int d
         << QString("--window-size=%1,%2").arg(screenW).arg(screenH - 40)
         << "--window-position=0,0";
 
+    // ── Extensions loading ────────────────────────────────────────────────
+    QString extStr = profile["extensions"].toString("[]");
+    QJsonDocument extDoc = QJsonDocument::fromJson(extStr.toUtf8());
+    QStringList extPaths;
+    if (extDoc.isArray()) {
+        for (const auto& item : extDoc.array()) {
+            QString path = item.isObject() ? item.toObject()["path"].toString() : item.toString();
+            bool enabled = item.isObject() ? item.toObject()["enabled"].toBool(true) : true;
+            if (enabled && !path.isEmpty() && QDir(path).exists()) {
+                extPaths << QDir::toNativeSeparators(path);
+            }
+        }
+    }
+    if (!extPaths.isEmpty()) {
+        args << QString("--load-extension=%1").arg(extPaths.join(','));
+        args << QString("--disable-extensions-except=%1").arg(extPaths.join(','));
+    }
+
     // ── OS-specific hardening ─────────────────────────────────────────────
 #ifdef Q_OS_WIN
     args << "--disable-gpu-sandbox";  // needed on some Windows configs
@@ -294,6 +313,12 @@ bool BrowserLauncher::launchProfile(const QString& profileId)
         fpPayload = QJsonDocument::fromJson(profile["fingerprint_data"].toString("{}").toUtf8()).object();
     }
     ipcPayload["fingerprint"] = fpPayload;
+
+    // Cookies for CDP injection
+    if (profile.contains("cookies")) {
+        ipcPayload["cookies"] = profile["cookies"].toString("[]");
+    }
+
     sendIPCCommand("attach_cdp", ipcPayload);
 
 
@@ -335,14 +360,24 @@ bool BrowserLauncher::isRunning(const QString& profileId)
 // ── Path detection ────────────────────────────────────────────────────────
 QString BrowserLauncher::detectChromiumPath()
 {
+    QString appDir = QCoreApplication::applicationDirPath();
     QStringList candidates = {
-        // Our custom-patched Chromium (preferred)
+        // Portable bundle locations
+        appDir + "/chromium/chrome.exe",
+        appDir + "/bin/chrome.exe",
+        appDir + "/../../../dist/chromium/chrome.exe",
+        "D:/C_Camofoux_Node/dist/chromium/chrome.exe",
+        appDir + "/../dist/chromium/chrome.exe",
+        appDir + "/../chromium/chrome.exe",
         QDir::currentPath() + "/../dist/chromium/chrome.exe",
-        // Fallback: system Chrome (unpatched — CDP injection still works)
+        QDir::currentPath() + "/dist/chromium/chrome.exe",
+        QDir::currentPath() + "/../chromium/chrome.exe",
+        // System Chrome
         "C:/Program Files/Google/Chrome/Application/chrome.exe",
         "C:/Program Files (x86)/Google/Chrome/Application/chrome.exe",
-        // Chromium portable
-        QDir::currentPath() + "/../chromium/chrome.exe",
+        // System Edge fallback
+        "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
+        "C:/Program Files/Microsoft/Edge/Application/msedge.exe"
     };
 
     for (const QString& p : candidates) {
@@ -356,18 +391,25 @@ QString BrowserLauncher::detectChromiumPath()
 
 QString BrowserLauncher::detectNodePath()
 {
-    QProcess probe;
-    probe.start("node", {"--version"});
-    probe.waitForFinished(2000);
-    if (probe.exitCode() == 0) return "node";
-
+    QString appDir = QCoreApplication::applicationDirPath();
     QStringList candidates = {
+        // Portable bundle locations
+        appDir + "/node.exe",
+        appDir + "/bin/node.exe",
+        appDir + "/injector/node.exe",
+        // System installations
         "C:/Program Files/nodejs/node.exe",
         "C:/Program Files (x86)/nodejs/node.exe",
     };
     for (const QString& p : candidates) {
         if (QFileInfo::exists(p)) return p;
     }
+
+    QProcess probe;
+    probe.start("node", {"--version"});
+    probe.waitForFinished(2000);
+    if (probe.exitCode() == 0) return "node";
+
     return "node";
 }
 
@@ -376,10 +418,16 @@ void BrowserLauncher::startNodeIPC()
 {
     if (m_nodeProcess && m_nodeProcess->state() == QProcess::Running) return;
 
+    QString appDir = QCoreApplication::applicationDirPath();
     // Find injector path relative to executable
     QStringList injectorCandidates = {
+        appDir + "/injector/src/index.js",
+        appDir + "/../injector/src/index.js",
+        appDir + "/../../injector/src/index.js",
+        QDir::currentPath() + "/injector/src/index.js",
         QDir::currentPath() + "/../injector/src/index.js",
         QDir::currentPath() + "/../../injector/src/index.js",
+        "D:/C_Camofoux_Node/injector/src/index.js"
     };
 
     QString injectorPath;

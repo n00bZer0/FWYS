@@ -35,6 +35,7 @@ set(SOURCES
     src/core/BrowserLauncher.cpp
     src/core/ProxyManager.cpp
     src/core/FingerprintConfig.cpp
+    src/core/IPCClient.cpp
     src/models/ProfileListModel.cpp
 )
 
@@ -46,6 +47,7 @@ set(HEADERS
     src/core/BrowserLauncher.h
     src/core/ProxyManager.h
     src/core/FingerprintConfig.h
+    src/core/IPCClient.h
     src/models/ProfileListModel.h
 )
 
@@ -71,6 +73,7 @@ qt_add_qml_module(FWYS
         qml/components/LoadingSpinner.qml
         qml/components/ProxyResultCard.qml
         qml/components/TabBar.qml
+        qml/components/CustomTabBar.qml
 )
 
 # Include directories

@@ -40,7 +40,9 @@ Item {
         ip_last_tested: "",
         os_type: "windows10",
         browser_version: "auto",
-        fingerprint_data: {}
+        fingerprint_data: {},
+        cookies: "[]",
+        extensions: "[]"
     })
 
     property bool isNew: profileId === ""
@@ -49,8 +51,48 @@ Item {
     property string statusMsg: ""
     property bool statusOk: true
 
-    // ── Load profile on open ──
-    Component.onCompleted: {
+    property var extensionsList: []
+    property int cookieCount: 0
+    property string cookieFormat: "None"
+
+    // ── Load profile on open or ID change ──
+    onProfileIdChanged: loadProfile()
+    Component.onCompleted: loadProfile()
+
+    function analyzeCookies(text) {
+        if (!text || !text.trim() || text.trim() === "[]") {
+            cookieCount = 0
+            cookieFormat = "Empty"
+            return
+        }
+        var str = text.trim()
+        if (str.startsWith("[") || str.startsWith("{")) {
+            try {
+                var j = JSON.parse(str)
+                var arr = Array.isArray(j) ? j : [j]
+                cookieCount = arr.length
+                cookieFormat = "JSON (" + cookieCount + " cookies)"
+                return
+            } catch(e) {}
+        }
+        var lines = str.split("\n")
+        var count = 0
+        for (var i = 0; i < lines.length; i++) {
+            var l = lines[i].trim()
+            if (!l || l.startsWith("#") || l.startsWith("//")) continue
+            var parts = l.split("\t")
+            if (parts.length >= 7) count++
+        }
+        if (count > 0) {
+            cookieCount = count
+            cookieFormat = "Netscape (" + count + " cookies)"
+        } else {
+            cookieCount = 0
+            cookieFormat = "Raw / Custom"
+        }
+    }
+
+    function loadProfile() {
         if (!isNew && typeof profileManager !== 'undefined') {
             var data = profileManager.getProfile(profileId)
             if (data && data.id) {
@@ -61,6 +103,194 @@ Item {
                 // Set OS selection
                 var osIdx = ["windows10","windows11","linux"].indexOf(data.os_type || "windows10")
                 osSelector.currentIndex = osIdx >= 0 ? osIdx : 0
+
+                // Parse proxy if present
+                if (data.proxy_string) {
+                    var p = profileManager.parseProxy(data.proxy_string)
+                    if (p.valid) {
+                        parsedText.text = p.proxy_type.toUpperCase() + " · " +
+                                          (p.proxy_username ? p.proxy_username + "@" : "") +
+                                          p.proxy_host + ":" + p.proxy_port
+                        parsedProxy.visible = true
+                    } else {
+                        parsedProxy.visible = false
+                    }
+                } else {
+                    parsedProxy.visible = false
+                }
+
+                // Restore IP Result Card if tested
+                if (data.ip_address) {
+                    ipResultCard.visible       = true
+                    ipResultCard.ipAddress     = data.ip_address
+                    ipResultCard.ipCountry     = data.ip_country || ""
+                    ipResultCard.ipCountryCode = data.ip_country_code || ""
+                    ipResultCard.ipCity        = data.ip_city || ""
+                    ipResultCard.ipIsp         = data.ip_isp || ""
+                    ipResultCard.ipAsn         = data.ip_asn || ""
+                    ipResultCard.ipScore       = (data.ip_score !== undefined) ? data.ip_score : -1
+                    ipResultCard.ipType        = data.ip_type || ""
+                    ipResultCard.ipTested      = data.ip_last_tested || ""
+                } else {
+                    ipResultCard.visible = false
+                }
+
+                // Restore Fingerprint controls
+                var fp = data.fingerprint_data || {}
+                if (fp.screen_resolution) {
+                    var sIdx = resolutionCombo.model.indexOf(fp.screen_resolution)
+                    if (sIdx >= 0) resolutionCombo.currentIndex = sIdx
+                } else if (fp.screen && fp.screen.width && fp.screen.height) {
+                    var resStr = fp.screen.width + "x" + fp.screen.height
+                    var sIdx2 = resolutionCombo.model.indexOf(resStr)
+                    if (sIdx2 >= 0) resolutionCombo.currentIndex = sIdx2
+                }
+
+                if (fp.hardware_concurrency || (fp.navigator && fp.navigator.hardwareConcurrency)) {
+                    var hw = (fp.hardware_concurrency || fp.navigator.hardwareConcurrency).toString()
+                    var hIdx = cpuCombo.model.indexOf(hw)
+                    if (hIdx >= 0) cpuCombo.currentIndex = hIdx
+                }
+
+                if (fp.device_memory || (fp.navigator && fp.navigator.deviceMemory)) {
+                    var mem = (fp.device_memory || fp.navigator.deviceMemory).toString()
+                    var mIdx = ramCombo.model.indexOf(mem)
+                    if (mIdx >= 0) ramCombo.currentIndex = mIdx
+                }
+
+                if (fp.canvas_noise !== undefined) {
+                    noiseSlider.value = fp.canvas_noise
+                }
+                if (fp.audio_noise !== undefined) {
+                    audioNoiseSlider.value = fp.audio_noise
+                }
+                if (fp.geo_mode) {
+                    var gIdx = ["proxy", "custom", "disabled"].indexOf(fp.geo_mode)
+                    if (gIdx >= 0) geoModeSelector.currentIndex = gIdx
+                }
+
+                // Restore Cookies & Extensions
+                cookiesArea.text = data.cookies || "[]"
+                analyzeCookies(cookiesArea.text)
+
+                try {
+                    var exts = JSON.parse(data.extensions || "[]")
+                    root.extensionsList = Array.isArray(exts) ? exts : []
+                } catch(e) {
+                    root.extensionsList = []
+                }
+            }
+        } else if (isNew) {
+            nameField.text  = ""
+            notesField.text = ""
+            proxyInput.text = ""
+            osSelector.currentIndex = 0
+            parsedProxy.visible = false
+            ipResultCard.visible = false
+            cookiesArea.text = "[]"
+            root.extensionsList = []
+            analyzeCookies("[]")
+        }
+    }
+
+    // ── IPC Connections (Proxy Test & Fingerprint Generation) ──
+    Connections {
+        target: typeof ipcClient !== 'undefined' ? ipcClient : null
+
+        function onProxyTestResult(profileId, success, ipData, error) {
+            if (root.profileId === profileId || (!root.profileId && profileId === "temp")) {
+                root.proxyTesting = false
+                ipResultCard.loading = false
+                if (success) {
+                    ipResultCard.visible       = true
+                    ipResultCard.ipAddress     = ipData.ip || ""
+                    ipResultCard.ipCountry     = ipData.country || ""
+                    ipResultCard.ipCountryCode = ipData.countryCode || ""
+                    ipResultCard.ipCity        = ipData.city || ""
+                    ipResultCard.ipIsp         = ipData.isp || ""
+                    ipResultCard.ipAsn         = ipData.asn || ""
+                    ipResultCard.ipScore       = (ipData.score !== undefined) ? ipData.score : -1
+                    ipResultCard.ipType        = ipData.type || ""
+                    ipResultCard.ipTested      = "Just now"
+
+                    root.profile.ip_address      = ipData.ip || ""
+                    root.profile.ip_country      = ipData.country || ""
+                    root.profile.ip_country_code = ipData.countryCode || ""
+                    root.profile.ip_city         = ipData.city || ""
+                    root.profile.ip_timezone     = ipData.timezone || ""
+                    root.profile.ip_asn          = ipData.asn || ""
+                    root.profile.ip_isp          = ipData.isp || ""
+                    root.profile.ip_score        = (ipData.score !== undefined) ? ipData.score : -1
+                    root.profile.ip_type         = ipData.type || ""
+                    root.profile.ip_lat          = ipData.lat || 0
+                    root.profile.ip_lng          = ipData.lng || 0
+                    root.profile.ip_last_tested  = (new Date()).toISOString()
+
+                    if (!root.isNew && root.profileId && typeof profileManager !== 'undefined') {
+                        profileManager.saveIpResult(root.profileId, ipData)
+                    }
+                    root.showStatus("Proxy test succeeded ✓ (" + (ipData.ip || "") + ")", true)
+                } else {
+                    root.showStatus("Proxy test failed: " + (error || "Connection error"), false)
+                }
+            }
+        }
+
+        function onFingerprintGenerated(profileId, success, fp, error) {
+            if (root.profileId === profileId || (!root.profileId && profileId === "temp")) {
+                root.fpGenerating = false
+                if (success) {
+                    root.profile.fingerprint_data = fp
+                    if (fp.screen_resolution) {
+                        var sIdx = resolutionCombo.model.indexOf(fp.screen_resolution)
+                        if (sIdx >= 0) resolutionCombo.currentIndex = sIdx
+                    } else if (fp.screen && fp.screen.width && fp.screen.height) {
+                        var resStr = fp.screen.width + "x" + fp.screen.height
+                        var sIdx2 = resolutionCombo.model.indexOf(resStr)
+                        if (sIdx2 >= 0) resolutionCombo.currentIndex = sIdx2
+                    }
+
+                    if (fp.hardware_concurrency || (fp.navigator && fp.navigator.hardwareConcurrency)) {
+                        var hw = (fp.hardware_concurrency || fp.navigator.hardwareConcurrency).toString()
+                        var hIdx = cpuCombo.model.indexOf(hw)
+                        if (hIdx >= 0) cpuCombo.currentIndex = hIdx
+                    }
+
+                    if (fp.device_memory || (fp.navigator && fp.navigator.deviceMemory)) {
+                        var mem = (fp.device_memory || fp.navigator.deviceMemory).toString()
+                        var mIdx = ramCombo.model.indexOf(mem)
+                        if (mIdx >= 0) ramCombo.currentIndex = mIdx
+                    }
+
+                    if (!root.isNew && root.profileId && typeof profileManager !== 'undefined') {
+                        profileManager.saveFingerprint(root.profileId, fp)
+                    }
+                    root.showStatus("Fingerprint generated ✓", true)
+                } else {
+                    root.showStatus("Fingerprint generation failed: " + (error || "Unknown error"), false)
+                }
+            }
+        }
+
+        function onCookiesParsed(success, count, json, netscape, error) {
+            if (success) {
+                cookiesArea.text = json
+                root.analyzeCookies(json)
+                root.showStatus("Parsed " + count + " cookies ✓", true)
+            } else {
+                root.showStatus("Cookie parse failed: " + (error || "Invalid format"), false)
+            }
+        }
+
+        function onCookiesExtracted(profileId, success, count, json, netscape, error) {
+            if (root.profileId === profileId) {
+                if (success) {
+                    cookiesArea.text = json
+                    root.analyzeCookies(json)
+                    root.showStatus("Extracted " + count + " cookies from browser ✓", true)
+                } else {
+                    root.showStatus("Cookie extraction failed: " + (error || "No active session"), false)
+                }
             }
         }
     }
@@ -78,6 +308,8 @@ Item {
             proxy_string:    proxyInput.text.trim(),
             os_type:         ["windows10","windows11","linux"][osSelector.currentIndex],
             browser_version: "auto",
+            cookies:         cookiesArea.text.trim() || "[]",
+            extensions:      JSON.stringify(root.extensionsList)
         }
 
         // Parse proxy if entered
@@ -90,14 +322,28 @@ Item {
             data.proxy_password = parsed.proxy_password || ""
         }
 
+        // Retain IP test results if tested
+        data.ip_address      = root.profile.ip_address || ""
+        data.ip_country      = root.profile.ip_country || ""
+        data.ip_country_code = root.profile.ip_country_code || ""
+        data.ip_city         = root.profile.ip_city || ""
+        data.ip_timezone     = root.profile.ip_timezone || ""
+        data.ip_asn          = root.profile.ip_asn || ""
+        data.ip_isp          = root.profile.ip_isp || ""
+        data.ip_score        = root.profile.ip_score !== undefined ? root.profile.ip_score : -1
+        data.ip_type         = root.profile.ip_type || ""
+        data.ip_lat          = root.profile.ip_lat || 0
+        data.ip_lng          = root.profile.ip_lng || 0
+        data.ip_last_tested  = root.profile.ip_last_tested || ""
+
         // Fingerprint overrides from UI
         var fp = root.profile.fingerprint_data || {}
-        fp["screen_resolution"] = resolutionCombo.currentText
+        fp["screen_resolution"]    = resolutionCombo.currentText
         fp["hardware_concurrency"] = parseInt(cpuCombo.currentText)
-        fp["device_memory"] = parseInt(ramCombo.currentText)
-        fp["canvas_noise"] = noiseSlider.value
-        fp["audio_noise"]  = audioNoiseSlider.value
-        fp["geo_mode"] = geoModeSelector.currentText.toLowerCase()
+        fp["device_memory"]        = parseInt(ramCombo.currentText)
+        fp["canvas_noise"]         = noiseSlider.value
+        fp["audio_noise"]          = audioNoiseSlider.value
+        fp["geo_mode"]             = geoModeSelector.currentText.toLowerCase()
 
         data.fingerprint_data = fp
 
@@ -219,11 +465,11 @@ Item {
         Rectangle {
             Layout.fillWidth: true; height: 1; color: border
         }
-        TabBar {
+        CustomTabBar {
             id: editorTabs
             Layout.fillWidth: true
-            tabs:     ["Basic", "Proxy", "Fingerprint", "Geo", "Extensions"]
-            tabIcons: ["👤",    "🌐",    "🖥",           "📍",  "🧩"]
+            tabs:     ["Basic", "Proxy", "Fingerprint", "Geo", "Cookies", "Extensions"]
+            tabIcons: ["👤",    "🌐",    "🖥",           "📍",  "🍪",      "🧩"]
         }
         Rectangle {
             Layout.fillWidth: true; height: 1; color: border
@@ -862,26 +1108,325 @@ Item {
             }
 
             // ════════════════════════════════════════════════════════════
-            // TAB 4 — Extensions
+            // TAB 4 — Cookies
             // ════════════════════════════════════════════════════════════
-            Item {
-                Rectangle {
-                    anchors.centerIn: parent
-                    color: "transparent"
-                    Column {
-                        anchors.centerIn: parent; spacing: 16
-                        Text { anchors.horizontalCenter: parent.horizontalCenter; text: "🧩"; font.pixelSize: 48 }
-                        Text {
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            text: "Extensions — Coming Soon"
-                            color: textPrimary; font { pixelSize: 16; weight: Font.DemiBold }
-                        }
-                        Text {
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            text: "Per-profile extension management will be available in the next update."
-                            color: textSub; font.pixelSize: 13
+            ScrollView {
+                clip: true; Layout.fillWidth: true; Layout.fillHeight: true
+                ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+
+                Column {
+                    width: parent.width; spacing: 0
+
+                    Item { width: 1; height: 24 }
+
+                    SectionCard {
+                        title: "Cookie Manager"; icon: "🍪"
+
+                        content: Column {
+                            spacing: 16; width: parent.width
+
+                            // Status bar / Badge
+                            Rectangle {
+                                width: parent.width; height: 50
+                                color: root.cookieCount > 0 ? "#10B98115" : surface
+                                radius: 10
+                                border.color: root.cookieCount > 0 ? "#10B98140" : border
+
+                                RowLayout {
+                                    anchors { fill: parent; leftMargin: 16; rightMargin: 16 }
+                                    spacing: 12
+
+                                    Text {
+                                        text: root.cookieCount > 0 ? "✓" : "ℹ"
+                                        color: root.cookieCount > 0 ? green : textSub
+                                        font { pixelSize: 16; weight: Font.Bold }
+                                    }
+
+                                    Column {
+                                        spacing: 2
+                                        Text {
+                                            text: root.cookieCount > 0 ?
+                                                  root.cookieCount + " Cookies Active" :
+                                                  "No Cookies Configured"
+                                            color: textPrimary
+                                            font { pixelSize: 13; weight: Font.DemiBold }
+                                        }
+                                        Text {
+                                            text: "Format: " + root.cookieFormat + " · Auto-injected via CDP on profile start"
+                                            color: textSub
+                                            font.pixelSize: 11
+                                        }
+                                    }
+
+                                    Item { Layout.fillWidth: true }
+
+                                    ActionButton {
+                                        text: "Extract from Session"
+                                        icon: "🌐"
+                                        enabled: !root.isNew && root.profileId !== ""
+                                        onClicked: {
+                                            if (typeof ipcClient !== 'undefined') {
+                                                ipcClient.sendCommand("get_cookies", { profileId: root.profileId })
+                                                root.showStatus("Requesting live cookies from browser...", true)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Action Toolbar
+                            RowLayout {
+                                width: parent.width; spacing: 10
+
+                                ActionButton {
+                                    text: "Parse / Validate"
+                                    icon: "🔍"
+                                    accent: true
+                                    onClicked: {
+                                        if (typeof ipcClient !== 'undefined') {
+                                            ipcClient.sendCommand("parse_cookies", { raw: cookiesArea.text })
+                                        } else {
+                                            root.analyzeCookies(cookiesArea.text)
+                                        }
+                                    }
+                                }
+
+                                ActionButton {
+                                    text: "Clear Cookies"
+                                    icon: "🧹"
+                                    onClicked: {
+                                        cookiesArea.text = "[]"
+                                        root.analyzeCookies("[]")
+                                        root.showStatus("Cookies cleared", true)
+                                    }
+                                }
+
+                                Item { Layout.fillWidth: true }
+
+                                Text {
+                                    text: "Supports JSON (EditThisCookie) & Netscape (cookies.txt)"
+                                    color: textSub; font.pixelSize: 11
+                                }
+                            }
+
+                            // Raw Cookies Text Area
+                            Rectangle {
+                                width: parent.width; height: 300
+                                radius: 10; color: surface; border.color: cookiesArea.activeFocus ? accent : border
+
+                                ScrollView {
+                                    anchors.fill: parent
+                                    anchors.margins: 8
+
+                                    TextArea {
+                                        id: cookiesArea
+                                        placeholderText: "Paste cookies here in JSON format (e.g. [{\"name\":\"session\",\"value\":\"...\",\"domain\":\".example.com\"}]) or Netscape cookies.txt format..."
+                                        placeholderTextColor: textSub
+                                        color: textPrimary
+                                        background: Item {}
+                                        wrapMode: Text.WrapAnywhere
+                                        font { pixelSize: 12; family: "Consolas" }
+                                        onTextChanged: root.analyzeCookies(text)
+                                    }
+                                }
+                            }
+
+                            Text {
+                                text: "• Injected automatically into the active Chromium page when profile starts.\n• Preserves domains, paths, secure flags, httpOnly flags, and expiration timestamps."
+                                color: textSub; font.pixelSize: 11; width: parent.width; wrapMode: Text.Wrap
+                            }
                         }
                     }
+
+                    Item { height: 24 }
+                }
+            }
+
+            // ════════════════════════════════════════════════════════════
+            // TAB 5 — Extensions
+            // ════════════════════════════════════════════════════════════
+            ScrollView {
+                clip: true; Layout.fillWidth: true; Layout.fillHeight: true
+                ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+
+                Column {
+                    width: parent.width; spacing: 0
+
+                    Item { width: 1; height: 24 }
+
+                    SectionCard {
+                        title: "Extensions Manager"; icon: "🧩"
+
+                        content: Column {
+                            spacing: 16; width: parent.width
+
+                            Text {
+                                text: "Load unpacked Chrome extensions (e.g. uBlock Origin, MetaMask, Proxy Switcher) directly into this profile on launch."
+                                color: textSub; font.pixelSize: 12; width: parent.width; wrapMode: Text.Wrap
+                            }
+
+                            // Add Extension Row
+                            Rectangle {
+                                width: parent.width; height: 52
+                                color: surface; radius: 10; border.color: border
+
+                                RowLayout {
+                                    anchors { fill: parent; margins: 6 }
+                                    spacing: 8
+
+                                    TextField {
+                                        id: newExtPath
+                                        Layout.fillWidth: true
+                                        Layout.fillHeight: true
+                                        placeholderText: "Folder path to unpacked extension (e.g. D:/extensions/ublock_origin)"
+                                        placeholderTextColor: textSub
+                                        color: textPrimary
+                                        background: Item {}
+                                        font { pixelSize: 13; family: "Segoe UI" }
+                                    }
+
+                                    ActionButton {
+                                        text: "Add Extension"
+                                        icon: "➕"
+                                        accent: true
+                                        onClicked: {
+                                            var path = newExtPath.text.trim()
+                                            if (!path) {
+                                                root.showStatus("Please enter an extension folder path", false)
+                                                return
+                                            }
+                                            var clean = path.replace(/\\/g, "/")
+                                            var parts = clean.split("/")
+                                            var name = parts[parts.length - 1] || "Extension"
+
+                                            var list = root.extensionsList.slice()
+                                            list.push({ path: path, name: name, enabled: true })
+                                            root.extensionsList = list
+                                            newExtPath.text = ""
+                                            root.showStatus("Added extension: " + name, true)
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Installed Extension List
+                            Column {
+                                width: parent.width; spacing: 8
+
+                                Repeater {
+                                    model: root.extensionsList
+
+                                    Rectangle {
+                                        width: parent.width; height: 56
+                                        radius: 10
+                                        color: modelData.enabled ? "#1E293B" : surface
+                                        border.color: border
+
+                                        RowLayout {
+                                            anchors { fill: parent; leftMargin: 16; rightMargin: 16 }
+                                            spacing: 12
+
+                                            Text {
+                                                text: "🧩"
+                                                font.pixelSize: 20
+                                                opacity: modelData.enabled ? 1.0 : 0.4
+                                            }
+
+                                            Column {
+                                                spacing: 2
+                                                Layout.fillWidth: true
+
+                                                Text {
+                                                    text: modelData.name || "Extension"
+                                                    color: modelData.enabled ? textPrimary : textSub
+                                                    font { pixelSize: 13; weight: Font.DemiBold }
+                                                }
+                                                Text {
+                                                    text: modelData.path || ""
+                                                    color: textSub
+                                                    font { pixelSize: 11; family: "Consolas" }
+                                                    elide: Text.ElideMiddle
+                                                    width: parent.width
+                                                }
+                                            }
+
+                                            // Enable / Disable toggle button
+                                            Rectangle {
+                                                width: 80; height: 28; radius: 6
+                                                color: modelData.enabled ? "#10B98120" : surface
+                                                border.color: modelData.enabled ? green : border
+
+                                                Text {
+                                                    anchors.centerIn: parent
+                                                    text: modelData.enabled ? "Enabled" : "Disabled"
+                                                    color: modelData.enabled ? green : textSub
+                                                    font { pixelSize: 11; weight: Font.Medium }
+                                                }
+
+                                                MouseArea {
+                                                    anchors.fill: parent
+                                                    cursorShape: Qt.PointingHandCursor
+                                                    onClicked: {
+                                                        var list = root.extensionsList.slice()
+                                                        list[index].enabled = !list[index].enabled
+                                                        root.extensionsList = list
+                                                    }
+                                                }
+                                            }
+
+                                            // Remove button
+                                            Rectangle {
+                                                width: 32; height: 32; radius: 6; color: surface
+                                                border.color: border
+                                                Text {
+                                                    anchors.centerIn: parent; text: "🗑"
+                                                    font.pixelSize: 13
+                                                }
+                                                MouseArea {
+                                                    anchors.fill: parent
+                                                    cursorShape: Qt.PointingHandCursor
+                                                    onClicked: {
+                                                        var list = root.extensionsList.slice()
+                                                        list.splice(index, 1)
+                                                        root.extensionsList = list
+                                                        root.showStatus("Extension removed", true)
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Empty State
+                                Rectangle {
+                                    visible: root.extensionsList.length === 0
+                                    width: parent.width; height: 75
+                                    color: surface; radius: 10; border.color: border
+
+                                    Column {
+                                        anchors.centerIn: parent; spacing: 4
+                                        Text {
+                                            anchors.horizontalCenter: parent.horizontalCenter
+                                            text: "No extensions added yet"
+                                            color: textSub; font.pixelSize: 12
+                                        }
+                                        Text {
+                                            anchors.horizontalCenter: parent.horizontalCenter
+                                            text: "Enter an unpacked extension directory path above to install"
+                                            color: textSub; opacity: 0.7; font.pixelSize: 11
+                                        }
+                                    }
+                                }
+                            }
+
+                            Text {
+                                text: "Extensions are passed via Chromium's --load-extension flag upon browser startup."
+                                color: textSub; font.pixelSize: 11; width: parent.width; wrapMode: Text.Wrap
+                            }
+                        }
+                    }
+
+                    Item { height: 24 }
                 }
             }
 

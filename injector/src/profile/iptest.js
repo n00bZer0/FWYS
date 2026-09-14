@@ -18,10 +18,15 @@ const http  = require('http');
 
 // ─── Build proxy agent from parsed proxy info ──────────────────────────────
 function buildAgent(proxy) {
-    if (!proxy || proxy.type === 'none') return null;
+    if (!proxy) return null;
+    const type = (proxy.type || proxy.proxy_type || 'none').toLowerCase();
+    if (type === 'none') return null;
 
-    const { type, host, port, username, password } = proxy;
-    const auth = username ? `${username}:${password}@` : '';
+    const host = proxy.host || proxy.proxy_host;
+    const port = proxy.port || proxy.proxy_port;
+    const username = proxy.username || proxy.proxy_username || proxy.user || '';
+    const password = proxy.password || proxy.proxy_password || proxy.pass || '';
+    const auth = username ? `${encodeURIComponent(username)}:${encodeURIComponent(password)}@` : '';
 
     if (type === 'socks4' || type === 'socks5') {
         const uri = `${type}://${auth}${host}:${port}`;
@@ -153,9 +158,10 @@ async function fetchIpData(agent) {
  *     lat, lng, isProxy, isHosting, tested_at }
  */
 async function testProxy(proxy) {
+    const proxyType = (proxy?.type || proxy?.proxy_type || 'none').toLowerCase();
     const agent = buildAgent(proxy);
-    if (!agent && proxy.type !== 'none') {
-        throw new Error('Could not build proxy agent for type: ' + proxy.type);
+    if (!agent && proxyType !== 'none') {
+        throw new Error('Could not build proxy agent for type: ' + proxyType);
     }
 
     // Run all 3 sources in parallel, don't fail if one fails

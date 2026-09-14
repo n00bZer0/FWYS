@@ -34,8 +34,11 @@ engine/ungoogled-chromium/
 engine/*.tar.xz
 
 # Profile data
-profiles/profiles.db
-profiles/user_data/
+profiles/
+ui/profiles/
+*.db
+*.db-shm
+*.db-wal
 
 # IDE
 .vs/

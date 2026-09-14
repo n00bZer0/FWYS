@@ -18,7 +18,8 @@ const QStringList ProfileManager::s_allowedFields = {
     "ip_timezone", "ip_asn", "ip_isp", "ip_score", "ip_type",
     "ip_lat", "ip_lng", "ip_last_tested",
     "os_type", "browser_version",
-    "fingerprint_data"
+    "fingerprint_data",
+    "cookies", "extensions"
 };
 
 // ─── Profile struct serialization ─────────────────────────────────────────
@@ -50,6 +51,8 @@ QJsonObject Profile::toJson() const
     j["os_type"]          = osType;
     j["browser_version"]  = browserVersion;
     j["fingerprint_data"] = fingerprintData;
+    j["cookies"]          = cookies;
+    j["extensions"]       = extensions;
     j["status"]           = status;
     j["created_at"]       = createdAt;
     j["last_used_at"]     = lastUsedAt;
@@ -84,6 +87,8 @@ Profile Profile::fromJson(const QJsonObject& j)
     p.osType         = j["os_type"].toString("windows10");
     p.browserVersion = j["browser_version"].toString("auto");
     p.fingerprintData = j["fingerprint_data"].toObject();
+    p.cookies        = j["cookies"].toString("[]");
+    p.extensions     = j["extensions"].toString("[]");
     p.status         = j["status"].toInt(0);
     p.createdAt      = j["created_at"].toString();
     p.lastUsedAt     = j["last_used_at"].toString();
@@ -106,11 +111,13 @@ bool ProfileManager::createProfile(const QString& name)
         "(id, name, notes, proxy_string, proxy_type, proxy_host, proxy_port, "
         " proxy_username, proxy_password, "
         " ip_score, os_type, browser_version, fingerprint_data, "
+        " cookies, extensions, "
         " status, created_at, last_used_at) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         { id, name, "", "", "none", "", 0,
           "", "",
           -1, "windows10", "auto", "{}",
+          "[]", "[]",
           0, now, now }
     );
 
@@ -212,6 +219,15 @@ QJsonObject ProfileManager::parseProxy(const QString& proxyString)
     result["proxy_username"] = p.username;
     result["proxy_password"] = p.password;
     result["canonical"]    = p.canonical();
+
+    // Node.js & general IPC convenience keys
+    result["type"]     = p.typeString;
+    result["host"]     = p.host;
+    result["port"]     = p.port;
+    result["username"] = p.username;
+    result["password"] = p.password;
+    result["user"]     = p.username;
+    result["pass"]     = p.password;
     return result;
 }
 
@@ -298,4 +314,34 @@ void ProfileManager::touchLastUsed(const QString& id)
 {
     QString now = QDateTime::currentDateTime().toString(Qt::ISODate);
     m_db->exec("UPDATE profiles SET last_used_at = ? WHERE id = ?", { now, id });
+}
+
+// ── Cookies & Extensions ──────────────────────────────────────────────────
+
+QString ProfileManager::getCookies(const QString& id)
+{
+    auto rows = m_db->query("SELECT cookies FROM profiles WHERE id = ?", { id });
+    if (rows.isEmpty()) return "[]";
+    return rows.first()["cookies"].toString("[]");
+}
+
+bool ProfileManager::saveCookies(const QString& id, const QString& cookies)
+{
+    bool ok = m_db->exec("UPDATE profiles SET cookies = ? WHERE id = ?", { cookies, id });
+    if (ok) emit profileUpdated(id);
+    return ok;
+}
+
+QString ProfileManager::getExtensions(const QString& id)
+{
+    auto rows = m_db->query("SELECT extensions FROM profiles WHERE id = ?", { id });
+    if (rows.isEmpty()) return "[]";
+    return rows.first()["extensions"].toString("[]");
+}
+
+bool ProfileManager::saveExtensions(const QString& id, const QString& extensions)
+{
+    bool ok = m_db->exec("UPDATE profiles SET extensions = ? WHERE id = ?", { extensions, id });
+    if (ok) emit profileUpdated(id);
+    return ok;
 }
