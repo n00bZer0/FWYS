@@ -68,7 +68,7 @@ int main(int argc, char *argv[])
     // Initialize managers
     ProfileManager profileManager(&db);
     ProxyManager proxyManager;
-    BrowserLauncher launcher(&profileManager);
+    BrowserLauncher launcher(&profileManager, &db);
     FingerprintConfig fingerprintConfig;
 
     // QML models

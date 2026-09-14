@@ -1,158 +1,57 @@
+'use strict';
+
 /**
  * FWYS — CDPManager
  * Manages Chrome DevTools Protocol connections per profile.
- * Launches Chromium with correct flags and connects via CDP WebSocket.
+ *
+ * Two modes:
+ *   1. connect()     — legacy: spawns Chromium + attaches CDP
+ *   2. attachOnly()  — new: Chromium already launched by Qt, just attach CDP
+ *                      and inject stealth scripts
  */
 
-'use strict';
-
-const { spawn } = require('child_process');
-const WebSocket = require('ws');
-const http = require('http');
+const WebSocket   = require('ws');
+const http        = require('http');
 const StealthLoader = require('../stealth/StealthLoader');
 
-// Active sessions: profileId -> CDPSession
+// Active sessions: profileId → CDPSession
 const sessions = new Map();
 
 class CDPManager {
-  /**
-   * @param {string} profileId
-   * @param {string} chromiumPath - path to chrome.exe
-   * @param {number} debugPort - remote debugging port (unique per profile)
-   * @param {object} fingerprint - fingerprint config
-   */
   constructor(profileId, chromiumPath, debugPort, fingerprint) {
-    this.profileId = profileId;
+    this.profileId    = profileId;
     this.chromiumPath = chromiumPath;
-    this.debugPort = debugPort;
-    this.fingerprint = fingerprint;
-    this.pid = null;
-    this.ws = null;
-    this.msgId = 0;
-    this.callbacks = new Map();
-    this.pageController = null;
+    this.debugPort    = debugPort;
+    this.fingerprint  = fingerprint || {};
+    this.pid          = null;
+    this.ws           = null;
+    this.msgId        = 0;
+    this.callbacks    = new Map();
+    this._scriptId    = null;    // ID of our injected script (for removal if needed)
   }
 
-  /**
-   * Build Chromium command-line flags from fingerprint config.
-   */
-  buildFlags(userDataDir) {
-    const fp = this.fingerprint;
-    const flags = [
-      `--remote-debugging-port=${this.debugPort}`,
-      `--user-data-dir=${userDataDir}`,
-      '--no-first-run',
-      '--no-default-browser-check',
-      '--disable-background-networking',
-      '--disable-background-timer-throttling',
-      '--disable-backgrounding-occluded-windows',
-      '--disable-renderer-backgrounding',
-      '--disable-breakpad',
-      '--disable-client-side-phishing-detection',
-      '--disable-component-extensions-with-background-pages',
-      '--disable-default-apps',
-      '--disable-extensions',
-      '--disable-hang-monitor',
-      '--disable-ipc-flooding-protection',
-      '--disable-popup-blocking',
-      '--disable-prompt-on-repost',
-      '--disable-sync',
-      '--disable-translate',
-      '--disable-windows10-custom-titlebar',
-      '--metrics-recording-only',
-      '--no-sandbox',
-      '--safebrowsing-disable-auto-update',
-      '--password-store=basic',
-      '--use-mock-keychain',
-      '--force-webrtc-ip-handling-policy=disable_non_proxied_udp',
-    ];
-
-    // FWYS fingerprint flags (these are read by our C++ patches)
-    if (fp.canvas_seed) flags.push(`--fwys-canvas-seed=${fp.canvas_seed}`);
-    if (fp.audio_seed) flags.push(`--fwys-audio-seed=${fp.audio_seed}`);
-    if (fp.font_seed) flags.push(`--fwys-font-seed=${fp.font_seed}`);
-    if (fp.webgl_vendor) flags.push(`--fwys-webgl-vendor=${fp.webgl_vendor}`);
-    if (fp.webgl_renderer) flags.push(`--fwys-webgl-renderer=${fp.webgl_renderer}`);
-    if (fp.hardware_concurrency) flags.push(`--fwys-hw-concurrency=${fp.hardware_concurrency}`);
-    if (fp.device_memory) flags.push(`--fwys-device-memory=${fp.device_memory}`);
-    if (fp.ua_brand) flags.push(`--fwys-ua-brand=${fp.ua_brand}`);
-    if (fp.ua_version) flags.push(`--fwys-ua-version=${fp.ua_version}`);
-    if (fp.ua_platform) flags.push(`--fwys-ua-platform=${fp.ua_platform}`);
-
-    // WebRTC policy
-    if (fp.webrtc_mode === 'block') flags.push('--fwys-block-webrtc');
-    else if (fp.webrtc_mode === 'filter_local') flags.push('--fwys-webrtc-filter-local');
-
-    // Proxy
-    if (fp.proxy) {
-      flags.push(`--proxy-server=${fp.proxy}`);
-      if (fp.proxy_bypass) flags.push(`--proxy-bypass-list=${fp.proxy_bypass}`);
-    }
-
-    // Screen resolution
-    if (fp.screen_width && fp.screen_height) {
-      flags.push(`--window-size=${fp.screen_width},${fp.screen_height}`);
-    }
-
-    // User agent (full UA string override via switch)
-    if (fp.user_agent) flags.push(`--user-agent=${fp.user_agent}`);
-
-    return flags;
-  }
-
-  /**
-   * Launch Chromium and connect CDP.
-   */
+  // ── Mode 1: legacy — launch + attach ──────────────────────────────────
   async connect() {
-    const path = require('path');
-    const os = require('os');
-
-    const userDataDir = path.join(
-      process.cwd(), '..', 'profiles', 'user_data', this.profileId
-    );
-
-    const flags = this.buildFlags(userDataDir);
-
-    console.log(`  [CDP] Launching Chromium for profile: ${this.profileId}`);
-    console.log(`  [CDP] Debug port: ${this.debugPort}`);
-
-    // Launch Chromium process
-    this.process = spawn(this.chromiumPath, flags, {
-      detached: false,
-      stdio: 'ignore',
-    });
-
-    this.pid = this.process.pid;
-    console.log(`  [CDP] Chromium PID: ${this.pid}`);
-
-    this.process.on('exit', (code) => {
-      console.log(`  [CDP] Profile ${this.profileId} Chromium exited (code=${code})`);
-      sessions.delete(this.profileId);
-    });
-
-    // Wait for Chromium to start debugging port
+    console.log(`  [CDP] Connecting to already-running Chromium for profile: ${this.profileId}`);
     await this._waitForDebugPort();
-
-    // Get WebSocket URL for first page
-    const wsUrl = await this._getDebuggerUrl();
-    console.log(`  [CDP] WebSocket: ${wsUrl}`);
-
-    // Connect WebSocket
-    this.ws = new WebSocket(wsUrl);
-    await new Promise((res, rej) => {
-      this.ws.on('open', res);
-      this.ws.on('error', rej);
-    });
-
-    this.ws.on('message', (data) => this._onMessage(JSON.parse(data)));
-
-    // Setup stealth injection for all new pages
+    await this._connectWebSocket();
     await this._setupStealth();
-
     sessions.set(this.profileId, this);
-    console.log(`  [CDP] Profile ${this.profileId} connected and stealth active`);
+    console.log(`  [CDP] ✓ Profile ${this.profileId} — stealth active`);
   }
 
+  // ── Mode 2: attach-only (Qt launched Chrome, we just attach CDP) ───────
+  static async attachOnly(profileId, debugPort, fingerprint) {
+    const mgr = new CDPManager(profileId, null, debugPort, fingerprint);
+    await mgr._waitForDebugPort(30, 300);  // wait up to 9s for Chrome to start
+    await mgr._connectWebSocket();
+    await mgr._setupStealth();
+    sessions.set(profileId, mgr);
+    console.log(`  [CDP] ✓ Attached to profile ${profileId} on port ${debugPort}`);
+    return mgr;
+  }
+
+  // ── Wait for Chromium debug port to become available ──────────────────
   async _waitForDebugPort(retries = 20, delay = 500) {
     for (let i = 0; i < retries; i++) {
       try {
@@ -162,73 +61,202 @@ class CDPManager {
         await new Promise(r => setTimeout(r, delay));
       }
     }
-    throw new Error(`Chromium debug port ${this.debugPort} not available after ${retries} retries`);
+    throw new Error(`Debug port ${this.debugPort} not available (profile: ${this.profileId})`);
   }
 
   _getDebuggerUrl() {
     return new Promise((resolve, reject) => {
-      http.get(`http://127.0.0.1:${this.debugPort}/json/version`, (res) => {
+      const req = http.get(`http://127.0.0.1:${this.debugPort}/json/version`, (res) => {
         let data = '';
         res.on('data', d => data += d);
         res.on('end', () => {
           try {
             const json = JSON.parse(data);
+            if (!json.webSocketDebuggerUrl) throw new Error('No WebSocket URL');
             resolve(json.webSocketDebuggerUrl);
-          } catch (e) {
-            reject(e);
-          }
+          } catch (e) { reject(e); }
         });
-      }).on('error', reject);
+      });
+      req.on('error', reject);
+      req.setTimeout(3000, () => { req.destroy(); reject(new Error('timeout')); });
     });
   }
 
-  async send(method, params = {}) {
-    const id = ++this.msgId;
+  // ── WebSocket CDP connection ──────────────────────────────────────────
+  async _connectWebSocket() {
+    const wsUrl = await this._getDebuggerUrl();
+    console.log(`  [CDP] WS: ${wsUrl}`);
+
+    this.ws = new WebSocket(wsUrl);
+    await new Promise((res, rej) => {
+      this.ws.on('open', res);
+      this.ws.on('error', rej);
+    });
+
+    this.ws.on('message', (data) => {
+      try { this._onMessage(JSON.parse(data.toString())); }
+      catch { /* non-JSON frames */ }
+    });
+
+    this.ws.on('close', () => {
+      console.log(`  [CDP] WS closed for profile ${this.profileId}`);
+      sessions.delete(this.profileId);
+    });
+
+    this.ws.on('error', (err) => {
+      console.error(`  [CDP] WS error profile ${this.profileId}:`, err.message);
+    });
+  }
+
+  // ── CDP command send/receive ──────────────────────────────────────────
+  send(method, params = {}) {
     return new Promise((resolve, reject) => {
+      const id = ++this.msgId;
       this.callbacks.set(id, { resolve, reject });
-      this.ws.send(JSON.stringify({ id, method, params }));
+
+      const timeout = setTimeout(() => {
+        if (this.callbacks.has(id)) {
+          this.callbacks.delete(id);
+          reject(new Error(`CDP timeout: ${method}`));
+        }
+      }, 10000);
+
+      this.callbacks.get(id)._timeout = timeout;
+
+      try {
+        this.ws.send(JSON.stringify({ id, method, params }));
+      } catch (e) {
+        clearTimeout(timeout);
+        this.callbacks.delete(id);
+        reject(e);
+      }
     });
   }
 
   _onMessage(msg) {
     if (msg.id && this.callbacks.has(msg.id)) {
-      const { resolve, reject } = this.callbacks.get(msg.id);
+      const { resolve, reject, _timeout } = this.callbacks.get(msg.id);
+      clearTimeout(_timeout);
       this.callbacks.delete(msg.id);
       if (msg.error) reject(new Error(msg.error.message));
-      else resolve(msg.result);
+      else           resolve(msg.result);
     }
   }
 
+  // ── Core: inject stealth scripts via CDP ─────────────────────────────
   async _setupStealth() {
-    const stealthScript = StealthLoader.buildScript(this.fingerprint);
+    const fp = this.fingerprint;
 
-    // Enable Page domain
-    await this.send('Page.enable');
+    // Build combined stealth script from all modules
+    const stealthScript = StealthLoader.buildScript(fp);
 
-    // Inject stealth script on every new document
-    await this.send('Page.addScriptToEvaluateOnNewDocument', {
+    // Enable domains
+    await this.send('Page.enable').catch(() => {});
+    await this.send('Network.enable').catch(() => {});
+    await this.send('Runtime.enable').catch(() => {});
+
+    // ── CRITICAL: inject before ANY page JS runs ──
+    // worldName NOT set → runs in page's main world (not isolated)
+    // This means our patches share the same window object as page JS
+    const result = await this.send('Page.addScriptToEvaluateOnNewDocument', {
       source: stealthScript,
+      // NO worldName — must be main world for prototype patches to work
     });
+    this._scriptId = result?.identifier;
 
-    // Also inject User-Agent override at network level
-    if (this.fingerprint.user_agent) {
-      await this.send('Network.enable');
+    // ── User-Agent header override ────────────────────────────────────
+    const userAgent = fp.navigator?.userAgent || fp.user_agent;
+    if (userAgent) {
+      const langs = fp.navigator?.languages || ['en-US', 'en'];
       await this.send('Network.setUserAgentOverride', {
-        userAgent: this.fingerprint.user_agent,
+        userAgent,
+        acceptLanguage: langs.join(',') + ';q=0.9',
+        // platform is set via navigator patch (no CDP param for it)
       });
     }
 
-    console.log(`  [Stealth] Scripts injected for profile ${this.profileId}`);
+    // ── Extra HTTP headers (Sec-CH-UA etc.) ──────────────────────────
+    const headers = fp.headers || {};
+    const extraHeaders = {};
+    if (headers['Sec-CH-UA'])                  extraHeaders['Sec-CH-UA']                  = headers['Sec-CH-UA'];
+    if (headers['Sec-CH-UA-Mobile'])            extraHeaders['Sec-CH-UA-Mobile']            = headers['Sec-CH-UA-Mobile'];
+    if (headers['Sec-CH-UA-Platform'])          extraHeaders['Sec-CH-UA-Platform']          = headers['Sec-CH-UA-Platform'];
+    if (headers['Sec-CH-UA-Platform-Version'])  extraHeaders['Sec-CH-UA-Platform-Version']  = headers['Sec-CH-UA-Platform-Version'];
+    if (headers['Sec-CH-UA-Arch'])              extraHeaders['Sec-CH-UA-Arch']              = headers['Sec-CH-UA-Arch'];
+    if (headers['Sec-CH-UA-Bitness'])           extraHeaders['Sec-CH-UA-Bitness']           = headers['Sec-CH-UA-Bitness'];
+    if (headers['Sec-CH-UA-Full-Version-List']) extraHeaders['Sec-CH-UA-Full-Version-List'] = headers['Sec-CH-UA-Full-Version-List'];
+
+    if (Object.keys(extraHeaders).length) {
+      await this.send('Network.setExtraHTTPHeaders', { headers: extraHeaders });
+    }
+
+    // ── Geolocation override ──────────────────────────────────────────
+    const geo = fp.geo || {};
+    if (geo.mode === 'proxy' || geo.mode === 'custom') {
+      await this.send('Emulation.setGeolocationOverride', {
+        latitude:  geo.lat      || 40.7128,
+        longitude: geo.lng      || -74.0060,
+        accuracy:  geo.accuracy || 50,
+      }).catch(() => {});
+    } else if (geo.mode === 'disabled') {
+      await this.send('Emulation.setGeolocationOverride', {}).catch(() => {});
+    }
+
+    // ── Timezone override ─────────────────────────────────────────────
+    if (fp.timezone) {
+      await this.send('Emulation.setTimezoneOverride', {
+        timezoneId: fp.timezone,
+      }).catch(() => {});
+    }
+
+    // ── Locale override ───────────────────────────────────────────────
+    if (fp.locale) {
+      await this.send('Emulation.setLocaleOverride', {
+        locale: fp.locale,
+      }).catch(() => {});
+    }
+
+    // ── Screen/viewport ───────────────────────────────────────────────
+    const screen = fp.screen || {};
+    if (screen.width && screen.height) {
+      await this.send('Emulation.setDeviceMetricsOverride', {
+        width:             fp.window?.innerWidth  || screen.width,
+        height:            fp.window?.innerHeight || screen.height,
+        deviceScaleFactor: screen.devicePixelRatio || 1,
+        mobile:            false,
+        screenWidth:       screen.width,
+        screenHeight:      screen.height,
+      }).catch(() => {});
+    }
+
+    // ── Touch emulation (disable for desktop profiles) ────────────────
+    if ((fp.navigator?.maxTouchPoints || 0) === 0) {
+      await this.send('Emulation.setTouchEmulationEnabled', {
+        enabled: false,
+      }).catch(() => {});
+    }
+
+    console.log(`  [Stealth] ✓ All patches injected for profile ${this.profileId}`);
   }
 
+  // ── Close session ─────────────────────────────────────────────────────
   static closeProfile(profileId) {
     const session = sessions.get(profileId);
     if (session) {
-      if (session.ws) session.ws.close();
-      if (session.process) session.process.kill();
+      if (session.ws && session.ws.readyState === WebSocket.OPEN) {
+        session.ws.close();
+      }
       sessions.delete(profileId);
-      console.log(`  [CDP] Profile ${profileId} closed`);
+      console.log(`  [CDP] Profile ${profileId} detached`);
     }
+  }
+
+  static getSession(profileId) {
+    return sessions.get(profileId) || null;
+  }
+
+  static listSessions() {
+    return [...sessions.keys()];
   }
 }
 

@@ -63,6 +63,34 @@ async function main() {
     ipc.send('close_result', { profileId, success: true });
   });
 
+  // ── Attach CDP to already-running Chrome (launched by Qt BrowserLauncher) ─
+  // This is the PRIMARY launch flow:
+  //   1. Qt spawns chrome.exe with all --fwys-* flags (C++ patches active)
+  //   2. Qt sends attach_cdp to us with debugPort + fingerprint
+  //   3. We connect CDP and inject JS stealth scripts
+  //   4. All C++ + JS patches now active
+  ipc.on('attach_cdp', async (payload) => {
+    const { profileId, debugPort, fingerprint } = payload;
+    console.log(`  [IPC] attach_cdp: profile=${profileId}, port=${debugPort}`);
+
+    try {
+      const session = await CDPManager.attachOnly(profileId, debugPort, fingerprint);
+
+      ipc.send('cdp_attached', {
+        profileId,
+        success: true,
+        pid:     session.pid || 0,
+      });
+    } catch (err) {
+      console.error('  [ERROR] CDP attach failed:', err.message);
+      ipc.send('cdp_attached', {
+        profileId,
+        success: false,
+        error:   err.message,
+      });
+    }
+  });
+
   // ── Test proxy → return IP data ──────────────────────────────────────────
   ipc.on('test_proxy', async (payload) => {
     const { profileId, proxy } = payload;

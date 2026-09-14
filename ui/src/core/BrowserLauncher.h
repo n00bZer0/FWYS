@@ -4,8 +4,10 @@
 #include <QMap>
 #include <QString>
 #include <QJsonObject>
+#include <QStringList>
 
 class ProfileManager;
+class DatabaseManager;
 
 class BrowserLauncher : public QObject
 {
@@ -15,6 +17,7 @@ class BrowserLauncher : public QObject
 
 public:
     explicit BrowserLauncher(ProfileManager* profileManager,
+                              DatabaseManager* db,
                               QObject* parent = nullptr);
     ~BrowserLauncher();
 
@@ -24,7 +27,7 @@ public:
     QString nodejsPath() const { return m_nodejsPath; }
     void setNodejsPath(const QString& path);
 
-    // Launch browser for a profile
+    // Launch browser for a profile (reads profile from DB)
     Q_INVOKABLE bool launchProfile(const QString& profileId);
 
     // Close browser for a profile
@@ -39,6 +42,9 @@ public:
     // Auto-detect node.js
     Q_INVOKABLE QString detectNodePath();
 
+    // Build the full command-line args list for a profile (for preview/debug)
+    Q_INVOKABLE QStringList buildChromiumArgs(const QJsonObject& profile, int debugPort);
+
 signals:
     void chromiumPathChanged();
     void nodejsPathChanged();
@@ -50,11 +56,16 @@ private:
     void startNodeIPC();
     void sendIPCCommand(const QString& event, const QJsonObject& payload);
 
+    // Derive per-profile uint64 seed (canvas/audio noise)
+    quint64 profileSeed(const QString& profileId, const QString& type) const;
+
     ProfileManager* m_profileManager;
+    DatabaseManager* m_db;
+
     QString m_chromiumPath;
     QString m_nodejsPath;
 
-    // profileId -> injector process
+    // profileId -> chrome process
     QMap<QString, QProcess*> m_processes;
 
     // Single shared Node.js injector process
