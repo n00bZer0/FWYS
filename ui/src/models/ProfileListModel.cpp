@@ -1,5 +1,5 @@
 #include "ProfileListModel.h"
-#include "ProfileManager.h"
+#include "core/ProfileManager.h"
 #include <QJsonArray>
 #include <QJsonObject>
 

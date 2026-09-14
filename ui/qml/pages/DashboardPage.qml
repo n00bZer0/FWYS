@@ -177,10 +177,14 @@ Item {
                 width: 352; height: 40; radius: 8
                 color: surface; border.color: nameField.activeFocus ? accent : border
                 TextField {
-                    id: nameField; anchors { fill: parent; margins: 1 }
+                    id: nameField
+                    anchors.fill: parent
+                    anchors.margins: 1
                     placeholderText: "e.g. Account #1"
-                    placeholderTextColor: textSub; color: textPrimary
-                    background: Item {}; padding: 12
+                    placeholderTextColor: textSub
+                    color: textPrimary
+                    background: Item {}
+                    padding: 12
                 }
             }
 
@@ -189,10 +193,15 @@ Item {
                 width: 352; height: 40; radius: 8
                 color: surface; border.color: proxyField.activeFocus ? accent : border
                 TextField {
-                    id: proxyField; anchors { fill: parent; margins: 1 }
+                    id: proxyField
+                    anchors.fill: parent
+                    anchors.margins: 1
                     placeholderText: "socks5://user:pass@host:port"
-                    placeholderTextColor: textSub; color: textPrimary
-                    background: Item {}; padding: 12; font.family: "Consolas"
+                    placeholderTextColor: textSub
+                    color: textPrimary
+                    background: Item {}
+                    padding: 12
+                    font.family: "Consolas"
                 }
             }
 

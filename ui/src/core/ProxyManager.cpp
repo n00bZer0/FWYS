@@ -6,6 +6,7 @@
 #include <QEventLoop>
 #include <QUrl>
 #include <QRegularExpression>
+#include <QTimer>
 #include <QDebug>
 
 ProxyManager::ProxyManager(QObject* parent) : QObject(parent) {}

@@ -97,57 +97,64 @@ Item {
             }
         }
     }
-}
 
-component SectionCard: Rectangle {
-    property string title: ""
-    property Item content
-    Layout.fillWidth: true
-    height: contentColumn.implicitHeight + 56
-    radius: 14; color: bgCard; border.color: border
+    component SectionCard: Rectangle {
+        property string title: ""
+        property Item content
+        Layout.fillWidth: true
+        height: contentColumn.implicitHeight + 56
+        radius: 14; color: bgCard; border.color: border
 
-    Column {
-        id: contentColumn
-        anchors { fill: parent; margins: 20 }
-        spacing: 16
+        Column {
+            id: contentColumn
+            anchors { fill: parent; margins: 20 }
+            spacing: 16
 
-        Text {
-            text: title; color: textPrimary
-            font { pixelSize: 14; weight: Font.DemiBold }
+            Text {
+                text: title; color: textPrimary
+                font { pixelSize: 14; weight: Font.DemiBold }
+            }
+            Rectangle { width: parent.width; height: 1; color: border }
+            Loader { sourceComponent: content ? content : null }
         }
-        Rectangle { width: parent.width; height: 1; color: border }
-        Loader { sourceComponent: content ? content : null }
     }
-}
 
-component FormField: Column {
-    property string label: ""
-    property string placeholder: ""
-    property bool multiline: false
-    property bool password: false
-    property int width_: 0
+    component FormField: Column {
+        property string label: ""
+        property string placeholder: ""
+        property bool multiline: false
+        property bool password: false
+        property int width_: 0
 
-    spacing: 6
-    width: width_ > 0 ? width_ : parent.width
+        spacing: 6
+        width: width_ > 0 ? width_ : parent.width
 
-    Text { text: label; color: textSub; font.pixelSize: 12 }
-    Rectangle {
-        width: parent.width
-        height: multiline ? 80 : 40; radius: 8
-        color: surface; border.color: border
+        Text { text: label; color: textSub; font.pixelSize: 12 }
+        Rectangle {
+            width: parent.width
+            height: multiline ? 80 : 40; radius: 8
+            color: surface; border.color: border
 
-        TextArea {
-            visible: multiline
-            anchors.fill: parent; padding: 10
-            placeholderText: placeholder; placeholderTextColor: textSub
-            color: textPrimary; background: Item {}; wrapMode: Text.Wrap
-        }
-        TextField {
-            visible: !multiline
-            anchors.fill: parent; padding: 12
-            placeholderText: placeholder; placeholderTextColor: textSub
-            color: textPrimary; background: Item {}
-            echoMode: password ? TextInput.Password : TextInput.Normal
+            TextArea {
+                visible: multiline
+                anchors.fill: parent
+                padding: 10
+                placeholderText: placeholder
+                placeholderTextColor: textSub
+                color: textPrimary
+                background: Item {}
+                wrapMode: Text.Wrap
+            }
+            TextField {
+                visible: !multiline
+                anchors.fill: parent
+                padding: 12
+                placeholderText: placeholder
+                placeholderTextColor: textSub
+                color: textPrimary
+                background: Item {}
+                echoMode: password ? TextInput.Password : TextInput.Normal
+            }
         }
     }
 }

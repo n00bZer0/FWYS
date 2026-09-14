@@ -46,8 +46,12 @@ ApplicationWindow {
         anchors { top: parent.top; left: parent.left; right: parent.right }
         height: 44
         property point startPos
-        onPressed: startPos = Qt.point(mouse.screenX - root.x, mouse.screenY - root.y)
-        onPositionChanged: if (pressed) root.setX(mouse.screenX - startPos.x); root.setY(mouse.screenY - startPos.y)
+        onPositionChanged: {
+            if (pressed) {
+                root.x = mouse.screenX - startPos.x;
+                root.y = mouse.screenY - startPos.y;
+            }
+        }
     }
 
     RowLayout {
@@ -151,27 +155,27 @@ ApplicationWindow {
             root.height = Math.max(root.minimumHeight, startSize.height + mouse.screenY - startPos.y)
         }
     }
-}
 
-// ─── Mini window button component ──────────────────────────────────────────
-component WinBtn: Rectangle {
-    property string text: ""
-    property bool isClose: false
-    signal clicked()
+    // ─── Mini window button component ──────────────────────────────────────────
+    component WinBtn: Rectangle {
+        property string text: ""
+        property bool isClose: false
+        signal clicked()
 
-    width: 32; height: 28
-    radius: 6
-    color: maWin.containsMouse ? (isClose ? "#FF4455" : "#ffffff18") : "transparent"
-    Behavior on color { ColorAnimation { duration: 120 } }
+        width: 32; height: 28
+        radius: 6
+        color: maWin.containsMouse ? (isClose ? "#FF4455" : "#ffffff18") : "transparent"
+        Behavior on color { ColorAnimation { duration: 120 } }
 
-    Text {
-        anchors.centerIn: parent
-        text: parent.text
-        color: maWin.containsMouse ? "#fff" : "#7879A0"
-        font.pixelSize: 13
-    }
-    MouseArea {
-        id: maWin; anchors.fill: parent; hoverEnabled: true
-        onClicked: parent.clicked()
+        Text {
+            anchors.centerIn: parent
+            text: parent.text
+            color: maWin.containsMouse ? "#fff" : "#7879A0"
+            font.pixelSize: 13
+        }
+        MouseArea {
+            id: maWin; anchors.fill: parent; hoverEnabled: true
+            onClicked: parent.clicked()
+        }
     }
 }

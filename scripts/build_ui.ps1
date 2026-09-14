@@ -35,37 +35,17 @@ if ([string]::IsNullOrEmpty($QtDir)) {
     $QtDir = $env:QT6_DIR
 }
 
-if ([string]::IsNullOrEmpty($QtDir)) {
-    # Auto-detect common Qt install paths
-    $searchPaths = @(
-        "C:\Qt\6.9\msvc2022_64",
-        "C:\Qt\6.8\msvc2022_64",
-        "C:\Qt\6.7\msvc2022_64",
-        "C:\Qt\6.6\msvc2022_64",
-        "C:\Qt\6.8.0\msvc2022_64",
-        "D:\Qt\6.8\msvc2022_64",
-        "D:\Qt\6.7\msvc2022_64",
-        "C:\Qt\6.8\mingw_64",
-        "C:\Qt\6.7\mingw_64"
-    )
-    foreach ($p in $searchPaths) {
-        if (Test-Path "$p\lib\cmake\Qt6") {
-            $QtDir = $p
-            Write-Host "[AUTO] Found Qt6 at: $QtDir" -ForegroundColor Green
-            break
-        }
+if ([string]::IsNullOrEmpty($QtDir) -or -not (Test-Path $QtDir)) {
+    # Auto-detect Qt install paths
+    $qtCandidates = Get-ChildItem -Path "C:\Qt", "D:\Qt" -Filter "msvc*" -Recurse -Depth 3 -ErrorAction SilentlyContinue | Where-Object { Test-Path "$($_.FullName)\lib\cmake\Qt6" }
+    if ($qtCandidates) {
+        $QtDir = $qtCandidates[0].FullName
+        Write-Host "[AUTO] Found Qt6 at: $QtDir" -ForegroundColor Green
     }
 }
 
 if ([string]::IsNullOrEmpty($QtDir) -or -not (Test-Path $QtDir)) {
     Write-Host "[ERROR] Qt6 C++ SDK not found!" -ForegroundColor Red
-    Write-Host "        Qt 6.5+ (MSVC 2022 x64) is required to compile the native UI." -ForegroundColor Yellow
-    Write-Host ""
-    Write-Host "        Quick install command (via python):" -ForegroundColor Cyan
-    Write-Host "          python -m pip install aqtinstall" -ForegroundColor Gray
-    Write-Host "          python -m aqt install-qt windows desktop 6.8.0 win64_msvc2022_64 -O C:\Qt" -ForegroundColor Gray
-    Write-Host ""
-    Write-Host "        Then re-run .\scripts\build_ui.ps1" -ForegroundColor Yellow
     exit 1
 }
 
@@ -87,7 +67,6 @@ if (-not (Test-Path $buildDir)) {
 Write-Host "[1/3] Configuring CMake..." -ForegroundColor Yellow
 Push-Location $buildDir
 
-# Detect generator or let CMake pick default VS generator
 $cmakeResult = cmake .. `
     -DCMAKE_PREFIX_PATH="$QtDir" `
     -DCMAKE_BUILD_TYPE=$Config `

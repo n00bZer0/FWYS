@@ -101,37 +101,45 @@ Item {
             }
         }
     }
-}
 
-component FpGroup: Rectangle {
-    property string title: ""
-    property var model: []
-    Layout.fillWidth: true
-    height: groupCol.implicitHeight + 40
-    radius: 14; color: bgCard; border.color: border
+    component FpGroup: Rectangle {
+        property string title: ""
+        property var model: []
+        Layout.fillWidth: true
+        height: groupCol.implicitHeight + 40
+        radius: 14; color: bgCard; border.color: border
 
-    Column {
-        id: groupCol; anchors { fill: parent; margins: 16 }; spacing: 12
+        Column {
+            id: groupCol
+            anchors.fill: parent
+            anchors.margins: 16
+            spacing: 12
 
-        Text { text: parent.title; color: textPrimary; font { pixelSize: 13; weight: Font.DemiBold } }
-        Rectangle { width: parent.width; height: 1; color: border }
+            Text { text: parent.title; color: textPrimary; font { pixelSize: 13; weight: Font.DemiBold } }
+            Rectangle { width: parent.width; height: 1; color: border }
 
-        Repeater {
-            model: parent.model
-            Row {
-                width: parent.width; spacing: 12
-                Text {
-                    text: modelData.label; color: textSub; font.pixelSize: 12
-                    width: 160; anchors.verticalCenter: parent.verticalCenter
-                }
-                Rectangle {
-                    width: parent.width - 172; height: 34; radius: 8
-                    color: surface; border.color: border
-                    TextField {
-                        anchors { fill: parent; margins: 1 }; padding: 10
-                        text: modelData.val; color: textPrimary; background: Item {}
-                        font.family: "Consolas"; font.pixelSize: 12
-                        placeholderText: "Auto"
+            Repeater {
+                model: parent.model
+                Row {
+                    width: parent.width; spacing: 12
+                    Text {
+                        text: modelData.label; color: textSub; font.pixelSize: 12
+                        width: 160; anchors.verticalCenter: parent.verticalCenter
+                    }
+                    Rectangle {
+                        width: parent.width - 172; height: 34; radius: 8
+                        color: surface; border.color: border
+                        TextField {
+                            anchors.fill: parent
+                            anchors.margins: 1
+                            padding: 10
+                            text: modelData.val
+                            color: textPrimary
+                            background: Item {}
+                            font.family: "Consolas"
+                            font.pixelSize: 12
+                            placeholderText: "Auto"
+                        }
                     }
                 }
             }

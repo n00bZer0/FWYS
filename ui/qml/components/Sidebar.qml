@@ -120,56 +120,56 @@ Rectangle {
 
         Item { height: 8 }
     }
-}
 
-component NavItem: Rectangle {
-    property string icon: ""
-    property string label: ""
-    property string page: ""
-    property string currentPage: ""
-    signal clicked()
+    component NavItem: Rectangle {
+        property string icon: ""
+        property string label: ""
+        property string page: ""
+        property string currentPage: ""
+        signal clicked()
 
-    Layout.fillWidth: true
-    Layout.leftMargin: 10; Layout.rightMargin: 10
-    Layout.bottomMargin: 4
-    height: 44; radius: 10
+        Layout.fillWidth: true
+        Layout.leftMargin: 10; Layout.rightMargin: 10
+        Layout.bottomMargin: 4
+        height: 44; radius: 10
 
-    readonly property bool isActive: currentPage === page
+        readonly property bool isActive: currentPage === page
 
-    color: isActive ? accentGlow : (navMa.containsMouse ? surfaceHover : "transparent")
-    Behavior on color { ColorAnimation { duration: 150 } }
+        color: isActive ? accentGlow : (navMa.containsMouse ? surfaceHover : "transparent")
+        Behavior on color { ColorAnimation { duration: 150 } }
 
-    // Active indicator bar
-    Rectangle {
-        anchors { left: parent.left; verticalCenter: parent.verticalCenter }
-        width: 3; height: isActive ? 24 : 0; radius: 2
-        color: accent
-        Behavior on height { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-    }
-
-    RowLayout {
-        anchors { fill: parent; leftMargin: 16; rightMargin: 12 }
-        spacing: 12
-
-        Text {
-            text: icon
-            color: isActive ? accent : textSub
-            font.pixelSize: 16
-            Behavior on color { ColorAnimation { duration: 150 } }
+        // Active indicator bar
+        Rectangle {
+            anchors { left: parent.left; verticalCenter: parent.verticalCenter }
+            width: 3; height: isActive ? 24 : 0; radius: 2
+            color: accent
+            Behavior on height { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
         }
 
-        Text {
-            text: label
-            color: isActive ? textPrimary : textSub
-            font { pixelSize: 13; family: "Segoe UI"; weight: isActive ? Font.DemiBold : Font.Normal }
-            Behavior on color { ColorAnimation { duration: 150 } }
-        }
-    }
+        RowLayout {
+            anchors { fill: parent; leftMargin: 16; rightMargin: 12 }
+            spacing: 12
 
-    MouseArea {
-        id: navMa; anchors.fill: parent
-        hoverEnabled: true
-        cursorShape: Qt.PointingHandCursor
-        onClicked: parent.clicked()
+            Text {
+                text: icon
+                color: isActive ? accent : textSub
+                font.pixelSize: 16
+                Behavior on color { ColorAnimation { duration: 150 } }
+            }
+
+            Text {
+                text: label
+                color: isActive ? textPrimary : textSub
+                font { pixelSize: 13; family: "Segoe UI"; weight: isActive ? Font.DemiBold : Font.Normal }
+                Behavior on color { ColorAnimation { duration: 150 } }
+            }
+        }
+
+        MouseArea {
+            id: navMa; anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: parent.clicked()
+        }
     }
 }
