@@ -25,6 +25,18 @@ ProfileListModel::ProfileListModel(ProfileManager* pm, QObject* parent)
     );
 }
 
+void ProfileListModel::setStatus(const QString& profileId, int status)
+{
+    for (int i = 0; i < m_profiles.size(); ++i) {
+        if (m_profiles[i]["id"].toString() == profileId) {
+            m_profiles[i]["status"] = status;
+            const QModelIndex idx = index(i);
+            emit dataChanged(idx, idx, { StatusRole });
+            return;
+        }
+    }
+}
+
 void ProfileListModel::refresh()
 {
     beginResetModel();
@@ -46,24 +58,37 @@ QVariant ProfileListModel::data(const QModelIndex& index, int role) const
     const QJsonObject& p = m_profiles[index.row()];
 
     switch (role) {
-    case IdRole:        return p["id"].toString();
-    case NameRole:      return p["name"].toString();
-    case ProxyRole:     return p["proxy"].toString();
-    case ProxyTypeRole: return p["proxy_type"].toString();
-    case StatusRole:    return p["status"].toInt();
-    case CreatedAtRole: return p["created_at"].toString();
-    default:            return {};
+    case IdRole:          return p["id"].toString();
+    case NameRole:        return p["name"].toString();
+    case ProxyRole:       return p["proxy"].toString();
+    case ProxyTypeRole:   return p["proxy_type"].toString();
+    case StatusRole:      return p["status"].toInt();
+    case CreatedAtRole:   return p["created_at"].toString();
+    case OsTypeRole:      return p["os_type"].toString("windows10");
+    case IpAddressRole:   return p["ip_address"].toString();
+    case CountryFlagRole: return p["ip_country_flag"].toString();
+    case CountryCodeRole: return p["ip_country_code"].toString();
+    case RiskScoreRole:   return p["ip_score"].toInt(-1);
+    case LastUsedAtRole:  return p["last_used_at"].toString();
+    default:              return {};
     }
 }
 
 QHash<int, QByteArray> ProfileListModel::roleNames() const
 {
     return {
-        { IdRole,        "profileId" },
-        { NameRole,      "profileName" },
-        { ProxyRole,     "profileProxy" },
-        { ProxyTypeRole, "profileProxyType" },
-        { StatusRole,    "profileStatus" },
-        { CreatedAtRole, "profileCreatedAt" },
+        { IdRole,          "profileId" },
+        { NameRole,        "profileName" },
+        { ProxyRole,       "profileProxy" },
+        { ProxyTypeRole,   "profileProxyType" },
+        { StatusRole,      "profileStatus" },
+        { CreatedAtRole,   "profileCreatedAt" },
+        { OsTypeRole,      "profileOsType" },
+        { IpAddressRole,   "profileIpAddress" },
+        { CountryFlagRole, "profileCountryFlag" },
+        { CountryCodeRole, "profileCountryCode" },
+        { RiskScoreRole,   "profileRiskScore" },
+        { LastUsedAtRole,  "profileLastUsed" },
     };
 }
+

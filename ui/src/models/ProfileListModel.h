@@ -17,6 +17,12 @@ public:
         ProxyTypeRole,
         StatusRole,
         CreatedAtRole,
+        OsTypeRole,
+        IpAddressRole,
+        CountryFlagRole,
+        CountryCodeRole,
+        RiskScoreRole,
+        LastUsedAtRole,
     };
 
     explicit ProfileListModel(ProfileManager* pm, QObject* parent = nullptr);
@@ -25,8 +31,11 @@ public:
     QVariant data(const QModelIndex& index, int role = Qt::DisplayRole) const override;
     QHash<int, QByteArray> roleNames() const override;
 
+    // QML-callable: update status in-place (fast, no full refresh)
+    Q_INVOKABLE void setStatus(const QString& profileId, int status);
+
 public slots:
-    void refresh();
+    Q_INVOKABLE void refresh();
 
 private:
     ProfileManager* m_pm;
