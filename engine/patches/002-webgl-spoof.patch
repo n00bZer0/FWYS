@@ -1,0 +1,57 @@
+--- a/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.cc
++++ b/third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.cc
+@@ -1,5 +1,7 @@
+ // Copyright 2015 The Chromium Authors
+ // Use of this source code is governed by BSD-style license.
++//
++// FWYS Patch 002: WebGL UNMASKED_VENDOR and UNMASKED_RENDERER spoofing
++// Command line flags: --fwys-webgl-vendor=<string> --fwys-webgl-renderer=<string>
+
+ #include "third_party/blink/renderer/modules/webgl/webgl_rendering_context_base.h"
+
++#include "base/command_line.h"
++#include "base/strings/utf_string_conversions.h"
+
++namespace fwys_webgl {
++  static std::string spoofed_vendor;
++  static std::string spoofed_renderer;
++  static bool initialized = false;
++
++  void EnsureInit() {
++    if (initialized) return;
++    initialized = true;
++    const base::CommandLine* cmd = base::CommandLine::ForCurrentProcess();
++    if (cmd->HasSwitch("fwys-webgl-vendor")) {
++      spoofed_vendor = cmd->GetSwitchValueASCII("fwys-webgl-vendor");
++    }
++    if (cmd->HasSwitch("fwys-webgl-renderer")) {
++      spoofed_renderer = cmd->GetSwitchValueASCII("fwys-webgl-renderer");
++    }
++  }
++
++  const std::string& Vendor() { EnsureInit(); return spoofed_vendor; }
++  const std::string& Renderer() { EnsureInit(); return spoofed_renderer; }
++} // namespace fwys_webgl
+
+ namespace blink {
+
+ ScriptValue WebGLRenderingContextBase::getParameter(
+     ScriptState* script_state,
+     GLenum pname) {
+   // ... existing validation ...
+
++  // FWYS: Intercept UNMASKED extension parameters
++  if (pname == GL_UNMASKED_VENDOR_WEBGL || pname == GL_UNMASKED_RENDERER_WEBGL) {
++    if (pname == GL_UNMASKED_VENDOR_WEBGL && !fwys_webgl::Vendor().empty()) {
++      return WebGLAny(script_state,
++          String::FromUTF8(fwys_webgl::Vendor().c_str()));
++    }
++    if (pname == GL_UNMASKED_RENDERER_WEBGL && !fwys_webgl::Renderer().empty()) {
++      return WebGLAny(script_state,
++          String::FromUTF8(fwys_webgl::Renderer().c_str()));
++    }
++  }
++
+   // Continue to original implementation
+   GLint value = 0;
+   if (!isContextLost() && ExtensionEnabled(kWebGLDebugRendererInfoName)) {

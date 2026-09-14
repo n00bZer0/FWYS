@@ -1,0 +1,88 @@
+--- a/third_party/blink/renderer/core/html/canvas/html_canvas_element.cc
++++ b/third_party/blink/renderer/core/html/canvas/html_canvas_element.cc
+@@ -1,6 +1,8 @@
+ // Copyright 2006 The Chromium Authors. All rights reserved.
+ // Use of this source code is governed by a BSD-style license that can be
+ // found in the LICENSE file.
++//
++// FWYS Patch 001: Canvas fingerprint noise injection
+
+ #include "third_party/blink/renderer/core/html/canvas/html_canvas_element.h"
+
+@@ -30,6 +32,11 @@
+ #include "third_party/blink/renderer/platform/graphics/canvas_resource_provider.h"
+ #include "third_party/blink/renderer/platform/wtf/math_extras.h"
+ 
++// FWYS: Canvas noise helper
++namespace fwys {
++  static uint64_t canvas_noise_seed = 0;
++  void InitNoiseSeed(uint64_t seed) { canvas_noise_seed = seed; }
++  // Inject sub-pixel noise deterministically based on seed + pixel position
++  inline uint8_t NoiseByte(int x, int y, int channel) {
++    uint64_t h = canvas_noise_seed ^ ((uint64_t)x * 2654435761ULL)
++                 ^ ((uint64_t)y * 40503ULL) ^ ((uint64_t)channel * 7919ULL);
++    h ^= h >> 33; h *= 0xff51afd7ed558ccdULL;
++    h ^= h >> 33; h *= 0xc4ceb9fe1a85ec53ULL;
++    h ^= h >> 33;
++    // Returns 0 or 1 — sub-pixel level noise only
++    return (uint8_t)(h & 0x1);
++  }
++} // namespace fwys
+
+ namespace blink {
+
+--- a/third_party/blink/renderer/core/html/canvas/html_canvas_element.cc
++++ b/third_party/blink/renderer/core/html/canvas/html_canvas_element.cc
+@@ -350,6 +367,22 @@ String HTMLCanvasElement::toDataURL(const String& mime_type,
+   if (!IsPaintable())
+     return String("data:,");
+ 
++  // FWYS: Apply canvas noise before encoding
++  if (fwys::canvas_noise_seed != 0) {
++    sk_sp<SkImage> image = canvas_->NewImageSnapshot();
++    if (image) {
++      SkBitmap bm;
++      if (image->asLegacyBitmap(&bm)) {
++        bm.lockPixels();
++        uint8_t* pixels = static_cast<uint8_t*>(bm.getPixels());
++        int w = bm.width(), h = bm.height();
++        for (int y = 0; y < h; ++y) {
++          for (int x = 0; x < w; ++x) {
++            int idx = (y * w + x) * 4;
++            pixels[idx + 0] ^= fwys::NoiseByte(x, y, 0); // R
++            pixels[idx + 1] ^= fwys::NoiseByte(x, y, 1); // G
++            pixels[idx + 2] ^= fwys::NoiseByte(x, y, 2); // B
++            // Alpha channel untouched
++          }
++        }
++        bm.unlockPixels();
++      }
++    }
++  }
++
+   return ToDataURLInternal(mime_type, quality, kBackBuffer);
+ }
+
+--- a/content/renderer/render_frame_impl.cc
++++ b/content/renderer/render_frame_impl.cc
+@@ -1,5 +1,8 @@
+ // Copyright 2013 The Chromium Authors
+ // Use of this source code is governed by BSD-style license.
++//
++// FWYS Patch 001b: Pass canvas noise seed from command line to renderer
++//   Command line flag: --fwys-canvas-seed=<uint64>
+
+ #include "content/renderer/render_frame_impl.h"
+
+@@ -200,6 +203,16 @@ void RenderFrameImpl::Initialize(blink::WebFrame* parent) {
+   // ... existing code ...
++
++  // FWYS: Read canvas noise seed from command line and init
++  const base::CommandLine* cmd = base::CommandLine::ForCurrentProcess();
++  if (cmd->HasSwitch("fwys-canvas-seed")) {
++    std::string seed_str = cmd->GetSwitchValueASCII("fwys-canvas-seed");
++    uint64_t seed = 0;
++    if (base::StringToUint64(seed_str, &seed)) {
++      fwys::InitNoiseSeed(seed);
++    }
++  }

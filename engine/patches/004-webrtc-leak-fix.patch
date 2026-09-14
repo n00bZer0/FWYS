@@ -1,0 +1,70 @@
+--- a/third_party/blink/renderer/modules/peerconnection/rtc_peer_connection.cc
++++ b/third_party/blink/renderer/modules/peerconnection/rtc_peer_connection.cc
+@@ -1,5 +1,7 @@
+ // Copyright 2012 The Chromium Authors
+ // Use of this source code is governed by BSD-style license.
++//
++// FWYS Patch 004: WebRTC IP Leak Prevention
++// Filters private/local IPs from ICE candidates unless allowed by profile
+
+ #include "third_party/blink/renderer/modules/peerconnection/rtc_peer_connection.h"
+
++#include "base/command_line.h"
++#include "net/base/ip_address.h"
+
++namespace fwys_webrtc {
++  // Check if ICE candidate contains a private/local IP
++  bool IsPrivateCandidate(const std::string& candidate_str) {
++    // Parse IP from candidate string like:
++    // "candidate:... 192.168.1.1 ..."
++    std::vector<std::string> parts = base::SplitString(
++        candidate_str, " ", base::TRIM_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
++    
++    for (size_t i = 0; i < parts.size(); ++i) {
++      net::IPAddress addr;
++      if (addr.AssignFromIPLiteral(parts[i])) {
++        // Block private ranges: 10.x, 172.16-31.x, 192.168.x, 169.254.x, ::1
++        if (addr.IsLoopback() || addr.IsLinkLocal() ||
++            addr.IsPrivateNetwork()) {
++          return true;
++        }
++        // Block mDNS candidates (*.local)
++        if (parts[i].find(".local") != std::string::npos) {
++          return true;
++        }
++      }
++    }
++    return false;
++  }
++
++  bool ShouldBlockWebRTC() {
++    const base::CommandLine* cmd = base::CommandLine::ForCurrentProcess();
++    return cmd->HasSwitch("fwys-block-webrtc");
++  }
++
++  bool ShouldFilterLocalIPs() {
++    const base::CommandLine* cmd = base::CommandLine::ForCurrentProcess();
++    return cmd->HasSwitch("fwys-webrtc-filter-local");
++  }
++} // namespace fwys_webrtc
+
+ namespace blink {
+
+ void RTCPeerConnection::onIceCandidate(RTCIceCandidateEvent* event) {
++  // FWYS: WebRTC leak prevention
++  if (fwys_webrtc::ShouldBlockWebRTC()) {
++    // Block all ICE candidates (disable WebRTC entirely)
++    return;
++  }
++  if (fwys_webrtc::ShouldFilterLocalIPs() && event->candidate()) {
++    std::string candidate_str =
++        event->candidate()->candidate().Utf8();
++    if (fwys_webrtc::IsPrivateCandidate(candidate_str)) {
++      // Suppress this local IP candidate
++      return;
++    }
++  }
++
+   // Original handler
+   DispatchEvent(*event);
+ }

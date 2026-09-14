@@ -1,0 +1,68 @@
+--- a/components/embedder_support/user_agent_utils.cc
++++ b/components/embedder_support/user_agent_utils.cc
+@@ -1,5 +1,7 @@
+ // Copyright 2021 The Chromium Authors
+ // Use of this source code is governed by BSD-style license.
++//
++// FWYS Patch 007: User-Agent Client Hints customization
++// Allows --fwys-ua-brand, --fwys-ua-version, --fwys-ua-platform overrides
+
++#include "base/command_line.h"
+
++namespace fwys_ua {
++  static std::string brand;
++  static std::string version;
++  static std::string platform;
++  static bool initialized = false;
++
++  void EnsureInit() {
++    if (initialized) return; initialized = true;
++    auto* cmd = base::CommandLine::ForCurrentProcess();
++    if (cmd->HasSwitch("fwys-ua-brand"))
++      brand = cmd->GetSwitchValueASCII("fwys-ua-brand");
++    if (cmd->HasSwitch("fwys-ua-version"))
++      version = cmd->GetSwitchValueASCII("fwys-ua-version");
++    if (cmd->HasSwitch("fwys-ua-platform"))
++      platform = cmd->GetSwitchValueASCII("fwys-ua-platform");
++  }
++} // namespace fwys_ua
+
+ std::string GetUserAgent() {
++  fwys_ua::EnsureInit();
+   // ... existing UA string building ...
+ }
+
+ blink::UserAgentMetadata GetUserAgentMetadata() {
++  fwys_ua::EnsureInit();
+   blink::UserAgentMetadata metadata;
++  if (!fwys_ua::brand.empty())
++    metadata.brand_version_list.push_back({fwys_ua::brand, fwys_ua::version});
++  if (!fwys_ua::platform.empty())
++    metadata.platform = fwys_ua::platform;
+   // ... rest of existing code ...
+ }
+
+--- a/third_party/blink/renderer/core/frame/navigator.cc
++++ b/third_party/blink/renderer/core/frame/navigator.cc
+@@ -100,8 +100,17 @@ unsigned Navigator::hardwareConcurrency() const {
+-  return base::SysInfo::NumberOfProcessors();
++  // FWYS Patch 008: hardwareConcurrency override
++  const base::CommandLine* cmd = base::CommandLine::ForCurrentProcess();
++  if (cmd->HasSwitch("fwys-hw-concurrency")) {
++    int v = 0;
++    if (base::StringToInt(cmd->GetSwitchValueASCII("fwys-hw-concurrency"), &v) && v > 0)
++      return (unsigned)v;
++  }
++  return base::SysInfo::NumberOfProcessors();
+ }
+
+@@ -115,8 +125,17 @@ double Navigator::deviceMemory() const {
+-  return GetApproximatedDeviceMemory();
++  // FWYS Patch 009: deviceMemory override
++  if (cmd->HasSwitch("fwys-device-memory")) {
++    double v = 0;
++    if (base::StringToDouble(cmd->GetSwitchValueASCII("fwys-device-memory"), &v) && v > 0)
++      return v;
++  }
++  return GetApproximatedDeviceMemory();
+ }

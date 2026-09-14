@@ -1,0 +1,55 @@
+# FWYS .gitignore
+
+# Build outputs
+build/
+dist/
+*.exe
+*.dll
+*.pdb
+*.obj
+*.o
+*.a
+*.lib
+
+# Qt
+ui/build/
+ui/.cmake/
+CMakeCache.txt
+CMakeFiles/
+Makefile
+*.moc
+moc_*.cpp
+qrc_*.cpp
+ui_*.h
+
+# Node.js
+injector/node_modules/
+injector/.eslintcache
+npm-debug.log*
+
+# Chromium source (too large)
+engine/chromium/
+engine/depot_tools/
+engine/ungoogled-chromium/
+engine/*.tar.xz
+
+# Profile data
+profiles/profiles.db
+profiles/user_data/
+
+# IDE
+.vs/
+.vscode/
+*.user
+*.suo
+.idea/
+*.swp
+
+# OS
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# Logs
+*.log
+logs/

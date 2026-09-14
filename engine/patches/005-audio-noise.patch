@@ -1,0 +1,47 @@
+--- a/third_party/blink/renderer/modules/webaudio/analyser_node.cc
++++ b/third_party/blink/renderer/modules/webaudio/analyser_node.cc
+@@ -1,5 +1,7 @@
+ // Copyright 2011 The Chromium Authors
+ // Use of this source code is governed by BSD-style license.
++//
++// FWYS Patch 005: AudioContext / AudioBuffer noise injection
++// Applies seeded noise to audio analysis output
+
++#include "base/command_line.h"
+
++namespace fwys_audio {
++  static uint64_t audio_seed = 0;
++  static bool initialized = false;
++
++  void EnsureInit() {
++    if (initialized) return;
++    initialized = true;
++    const base::CommandLine* cmd = base::CommandLine::ForCurrentProcess();
++    if (cmd->HasSwitch("fwys-audio-seed")) {
++      std::string s = cmd->GetSwitchValueASCII("fwys-audio-seed");
++      base::StringToUint64(s, &audio_seed);
++    }
++  }
++
++  // Sub-LSB noise on float audio sample
++  float NoiseSample(float sample, size_t index) {
++    EnsureInit();
++    if (audio_seed == 0) return sample;
++    uint64_t h = audio_seed ^ (index * 6364136223846793005ULL + 1442695040888963407ULL);
++    h ^= h >> 33; h *= 0xff51afd7ed558ccdULL; h ^= h >> 33;
++    // Noise is tiny: ±1e-7 range — imperceptible but unique
++    float noise = ((float)(h & 0xFFFF) / (float)0x10000 - 0.5f) * 1e-7f;
++    return sample + noise;
++  }
++} // namespace fwys_audio
+
+--- a/third_party/blink/renderer/modules/webaudio/realtime_analyser.cc
++++ b/third_party/blink/renderer/modules/webaudio/realtime_analyser.cc
+@@ -180,6 +195,12 @@ void RealtimeAnalyser::GetFloatFrequencyData(NotShared<DOMFloat32Array> dest) {
+   size_t len = std::min(fft_size_, dest->length());
+   for (size_t i = 0; i < len; ++i) {
+-    dest->Data()[i] = frequency_data_[i];
++    // FWYS: Inject audio fingerprint noise
++    dest->Data()[i] = fwys_audio::NoiseSample(frequency_data_[i], i);
+   }
+ }

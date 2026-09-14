@@ -1,0 +1,36 @@
+--- a/content/renderer/render_frame_impl.cc
++++ b/content/renderer/render_frame_impl.cc
+@@ -1,5 +1,7 @@
+ // FWYS Patch 003: Remove navigator.webdriver flag and automation signals
++// This patch forces webdriver detection to always return false/undefined
++// and removes chrome.runtime automation markers
+
+--- a/third_party/blink/renderer/core/frame/navigator.cc
++++ b/third_party/blink/renderer/core/frame/navigator.cc
+@@ -90,8 +90,10 @@ bool Navigator::webdriver() const {
+-  // Return true if automation is active
+-  if (CoreInitializer::GetInstance().IsWebDriverActive())
+-    return true;
+-  return false;
++  // FWYS: Always return false — hide automation status
++  return false;
+ }
+
+--- a/chrome/renderer/chrome_content_renderer_client.cc
++++ b/chrome/renderer/chrome_content_renderer_client.cc
+@@ -400,10 +400,12 @@ void ChromeContentRendererClient::RunScriptsAtDocumentStart(
+     content::RenderFrame* render_frame) {
+-  // Expose chrome.runtime automation data
+-  if (IsAutomation()) {
+-    InjectAutomationScript(render_frame);
+-  }
++  // FWYS: Skip automation script injection entirely
+
+--- a/third_party/blink/renderer/core/frame/dom_window.cc
++++ b/third_party/blink/renderer/core/frame/dom_window.cc
+@@ -200,9 +200,11 @@ void DOMWindow::RegisterChromeRuntime() {
+-  if (HeadlessModeCheck()) {
+-    // Expose headless indicators
+-    SetHeadlessProperty(this);
+-  }
++  // FWYS: Remove headless property exposure

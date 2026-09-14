@@ -1,0 +1,48 @@
+--- a/third_party/blink/renderer/platform/fonts/font.cc
++++ b/third_party/blink/renderer/platform/fonts/font.cc
+@@ -1,5 +1,7 @@
+ // Copyright 2003 The Chromium Authors
+ // Use of this source code is governed by BSD-style license.
++//
++// FWYS Patch 006: Font metric randomization
++// Offsets measureText() width and glyph bounds by a tiny seeded amount
+
++#include "base/command_line.h"
+
++namespace fwys_font {
++  static double metric_scale = 0.0; // 0 = disabled
++  static bool initialized = false;
++
++  void EnsureInit() {
++    if (initialized) return;
++    initialized = true;
++    const base::CommandLine* cmd = base::CommandLine::ForCurrentProcess();
++    if (cmd->HasSwitch("fwys-font-seed")) {
++      std::string s = cmd->GetSwitchValueASCII("fwys-font-seed");
++      uint64_t seed = 0;
++      base::StringToUint64(s, &seed);
++      if (seed != 0) {
++        // Scale factor: 1.0 ± 0.0001 (tiny, imperceptible)
++        uint64_t h = seed ^ 0xdeadbeefcafe1234ULL;
++        h ^= h >> 33; h *= 0xff51afd7ed558ccdULL; h ^= h >> 33;
++        double frac = (double)(h & 0xFFFF) / (double)0x10000; // 0..1
++        metric_scale = 1.0 + (frac - 0.5) * 0.0002; // 0.9999 .. 1.0001
++      }
++    }
++  }
++
++  float ScaleMetric(float value) {
++    EnsureInit();
++    if (metric_scale == 0.0) return value;
++    return value * (float)metric_scale;
++  }
++} // namespace fwys_font
+
+ namespace blink {
+
+ float Font::Width(const TextRun& run, ...) const {
+   float width = /* original computation */ 0.f;
+   // ... existing code ...
++  return fwys_font::ScaleMetric(width);
+-  return width;
+ }

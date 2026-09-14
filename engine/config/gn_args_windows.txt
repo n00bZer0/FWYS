@@ -1,0 +1,51 @@
+# FWYS — GN Build Arguments (Windows Release)
+# Used by build_chromium.py
+
+is_debug = false
+is_official_build = true
+is_component_build = false
+
+# Target platform
+target_cpu = "x64"
+target_os = "win"
+
+# Compiler optimizations
+enable_nacl = false
+blink_symbol_level = 0
+symbol_level = 0
+enable_precompiled_headers = true
+
+# Remove ALL Google API keys and services
+google_api_key = ""
+google_default_client_id = ""
+google_default_client_secret = ""
+
+# Disable telemetry and crash reporting
+enable_reporting = false
+enable_background_mode = false
+enable_google_now = false
+
+# Safe Browsing disabled (reduces attack surface + removes Google dep)
+safe_browsing_mode = 0
+
+# Media codecs (enable for compatibility)
+proprietary_codecs = true
+ffmpeg_branding = "Chrome"
+
+# Performance
+use_jumbo_build = false
+use_thin_lto = false
+
+# Disable unused features to reduce binary size
+enable_extensions = true
+enable_pdf = false
+enable_print_preview = false
+
+# V8 JavaScript engine
+v8_enable_i18n_support = true
+icu_use_data_file = true
+
+# Disable test infrastructure
+build_angle_wgpu_end2end_tests = false
+build_dawn_tests = false
+enable_resource_allowlist_generation = false
