@@ -2,23 +2,59 @@
 #include <QObject>
 #include <QString>
 #include <QJsonObject>
+#include <QJsonArray>
+#include "ProxyParser.h"
 
 class DatabaseManager;
 
+// ─── Profile struct — complete data model ─────────────────────────────────
 struct Profile {
+    // Identity
     QString id;
     QString name;
-    QString proxy;
-    QString proxyType;       // "http", "socks5", "none"
+    QString notes;
+
+    // Proxy
+    QString proxyString;        // raw pasted string
+    ProxyType proxyType = ProxyType::None;
+    QString proxyTypeStr = "none";
+    QString proxyHost;
+    int     proxyPort = 0;
     QString proxyUsername;
     QString proxyPassword;
-    QString notes;
+
+    // IP Test Result
+    QString ipAddress;
+    QString ipCountry;
+    QString ipCountryCode;
+    QString ipCity;
+    QString ipTimezone;
+    QString ipAsn;
+    QString ipIsp;
+    int     ipScore = -1;       // -1 = not tested, 0-100 = risk score
+    QString ipType;             // residential / datacenter / mobile / vpn
+    double  ipLat = 0.0;
+    double  ipLng = 0.0;
+    QString ipLastTested;
+
+    // OS & Browser
+    QString osType = "windows10";       // windows10 / windows11 / linux
+    QString browserVersion = "auto";
+
+    // Full fingerprint JSON (75+ params)
+    QJsonObject fingerprintData;
+
+    // Metadata
+    int     status = 0;         // 0=idle 1=running 2=error
     QString createdAt;
     QString lastUsedAt;
-    int status;              // 0=idle, 1=running, 2=error
-    QJsonObject fingerprintOverrides;
+
+    // Convert to/from JSON for IPC & storage
+    QJsonObject toJson() const;
+    static Profile fromJson(const QJsonObject& j);
 };
 
+// ─── ProfileManager ────────────────────────────────────────────────────────
 class ProfileManager : public QObject
 {
     Q_OBJECT
@@ -26,27 +62,34 @@ class ProfileManager : public QObject
 public:
     explicit ProfileManager(DatabaseManager* db, QObject* parent = nullptr);
 
-    // CRUD
-    Q_INVOKABLE bool createProfile(const QString& name,
-                                   const QString& proxy = QString(),
-                                   const QString& proxyType = "none");
-    Q_INVOKABLE bool updateProfile(const QString& id, const QJsonObject& data);
-    Q_INVOKABLE bool deleteProfile(const QString& id);
+    // ── CRUD ──
+    Q_INVOKABLE bool        createProfile(const QString& name);
+    Q_INVOKABLE bool        updateProfile(const QString& id, const QJsonObject& data);
+    Q_INVOKABLE bool        deleteProfile(const QString& id);
     Q_INVOKABLE QJsonObject getProfile(const QString& id);
-    Q_INVOKABLE QJsonArray getAllProfiles();
+    Q_INVOKABLE QJsonArray  getAllProfiles();
+    Q_INVOKABLE int         profileCount();
 
-    // Fingerprint
+    // ── Proxy ──
+    // Parse proxy string and save parsed fields to DB
+    Q_INVOKABLE QJsonObject parseProxy(const QString& proxyString);
+    // Save IP test result into profile
+    Q_INVOKABLE bool        saveIpResult(const QString& id, const QJsonObject& ipData);
+
+    // ── Fingerprint ──
     Q_INVOKABLE QJsonObject getFingerprint(const QString& profileId);
-    Q_INVOKABLE bool setFingerprintOverride(const QString& profileId,
-                                             const QString& key,
-                                             const QJsonValue& value);
+    Q_INVOKABLE bool        saveFingerprint(const QString& profileId, const QJsonObject& fp);
+    // Convenience: update a single key inside fingerprint_data
+    Q_INVOKABLE bool        setFingerprintKey(const QString& profileId,
+                                              const QString& key,
+                                              const QJsonValue& value);
 
-    // Status
+    // ── Status ──
     Q_INVOKABLE void setProfileStatus(const QString& id, int status);
-    Q_INVOKABLE int getProfileStatus(const QString& id);
+    Q_INVOKABLE int  getProfileStatus(const QString& id);
 
-    // Count
-    Q_INVOKABLE int profileCount();
+    // ── Launch metadata ──
+    Q_INVOKABLE void touchLastUsed(const QString& id);
 
 signals:
     void profileCreated(const QString& id);
@@ -56,4 +99,7 @@ signals:
 
 private:
     DatabaseManager* m_db;
+
+    // Fields allowed in updateProfile()
+    static const QStringList s_allowedFields;
 };

@@ -31,6 +31,7 @@ set(SOURCES
     src/core/App.cpp
     src/core/DatabaseManager.cpp
     src/core/ProfileManager.cpp
+    src/core/ProxyParser.cpp
     src/core/BrowserLauncher.cpp
     src/core/ProxyManager.cpp
     src/core/FingerprintConfig.cpp
@@ -41,6 +42,7 @@ set(HEADERS
     src/core/App.h
     src/core/DatabaseManager.h
     src/core/ProfileManager.h
+    src/core/ProxyParser.h
     src/core/BrowserLauncher.h
     src/core/ProxyManager.h
     src/core/FingerprintConfig.h
@@ -67,6 +69,8 @@ qt_add_qml_module(FWYS
         qml/components/ProfileCard.qml
         qml/components/StatusBadge.qml
         qml/components/LoadingSpinner.qml
+        qml/components/ProxyResultCard.qml
+        qml/components/TabBar.qml
 )
 
 # Include directories

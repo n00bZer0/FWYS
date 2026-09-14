@@ -2,165 +2,1021 @@ import QtQuick 2.15
 import QtQuick.Layouts 1.15
 import QtQuick.Controls 2.15
 
+// ─── ProfileEditorPage ────────────────────────────────────────────────────
+// Full 5-tab profile editor:
+//   Tab 0: Basic        — name, notes, OS, browser version
+//   Tab 1: Proxy        — paste string, auto-parse, test, IP result
+//   Tab 2: Fingerprint  — screen, hardware, GPU, canvas/audio noise
+//   Tab 3: Geo          — coordinates, accuracy, mode
+//   Tab 4: Extensions   — per-profile extension list (placeholder)
+
 Item {
+    id: root
+
     property string profileId: ""
     signal back()
 
-    ColumnLayout {
-        anchors { fill: parent; margins: 28 }
-        spacing: 20
+    // Profile state (loaded from DB or defaults)
+    property var profile: ({
+        name: "",
+        notes: "",
+        proxy_string: "",
+        proxy_type: "none",
+        proxy_host: "",
+        proxy_port: 0,
+        proxy_username: "",
+        proxy_password: "",
+        ip_address: "",
+        ip_country: "",
+        ip_country_code: "",
+        ip_city: "",
+        ip_timezone: "",
+        ip_asn: "",
+        ip_isp: "",
+        ip_score: -1,
+        ip_type: "",
+        ip_lat: 0,
+        ip_lng: 0,
+        ip_last_tested: "",
+        os_type: "windows10",
+        browser_version: "auto",
+        fingerprint_data: {}
+    })
 
-        // Header
-        RowLayout {
-            Rectangle {
-                width: 36; height: 36; radius: 8; color: surface
-                Text { anchors.centerIn: parent; text: "←"; color: textPrimary; font.pixelSize: 18 }
-                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: back() }
-            }
-            Text {
-                text: profileId ? "Edit Profile" : "New Profile"
-                color: textPrimary; font { pixelSize: 20; weight: Font.Bold }
+    property bool isNew: profileId === ""
+    property bool proxyTesting: false
+    property bool fpGenerating: false
+    property string statusMsg: ""
+    property bool statusOk: true
+
+    // ── Load profile on open ──
+    Component.onCompleted: {
+        if (!isNew && typeof profileManager !== 'undefined') {
+            var data = profileManager.getProfile(profileId)
+            if (data && data.id) {
+                root.profile = data
+                nameField.text  = data.name    || ""
+                notesField.text = data.notes   || ""
+                proxyInput.text = data.proxy_string || ""
+                // Set OS selection
+                var osIdx = ["windows10","windows11","linux"].indexOf(data.os_type || "windows10")
+                osSelector.currentIndex = osIdx >= 0 ? osIdx : 0
             }
         }
+    }
 
-        ScrollView {
-            Layout.fillWidth: true; Layout.fillHeight: true; clip: true
+    // ── Collect all fields and save ──
+    function saveProfile() {
+        if (!nameField.text.trim()) {
+            showStatus("Profile name is required", false)
+            return
+        }
 
-            ColumnLayout {
-                width: parent.width; spacing: 20
+        var data = {
+            name:            nameField.text.trim(),
+            notes:           notesField.text.trim(),
+            proxy_string:    proxyInput.text.trim(),
+            os_type:         ["windows10","windows11","linux"][osSelector.currentIndex],
+            browser_version: "auto",
+        }
 
-                // Basic Info Section
-                SectionCard {
-                    title: "Basic Information"
-                    content: Column {
-                        spacing: 16
+        // Parse proxy if entered
+        if (proxyInput.text.trim()) {
+            var parsed = profileManager.parseProxy(proxyInput.text.trim())
+            data.proxy_type     = parsed.proxy_type     || "none"
+            data.proxy_host     = parsed.proxy_host     || ""
+            data.proxy_port     = parsed.proxy_port     || 0
+            data.proxy_username = parsed.proxy_username || ""
+            data.proxy_password = parsed.proxy_password || ""
+        }
 
-                        FormField { label: "Profile Name"; placeholder: "e.g. Facebook Account #1" }
-                        FormField { label: "Notes"; placeholder: "Optional notes..."; multiline: true }
+        // Fingerprint overrides from UI
+        var fp = root.profile.fingerprint_data || {}
+        fp["screen_resolution"] = resolutionCombo.currentText
+        fp["hardware_concurrency"] = parseInt(cpuCombo.currentText)
+        fp["device_memory"] = parseInt(ramCombo.currentText)
+        fp["canvas_noise"] = noiseSlider.value
+        fp["audio_noise"]  = audioNoiseSlider.value
+        fp["geo_mode"] = geoModeSelector.currentText.toLowerCase()
+
+        data.fingerprint_data = fp
+
+        var ok
+        if (isNew) {
+            ok = profileManager.createProfile(data.name)
+            // After create, get new ID and update
+            if (ok) {
+                var all = profileManager.getAllProfiles()
+                if (all.length > 0) {
+                    var newId = all[0].id
+                    profileManager.updateProfile(newId, data)
+                }
+            }
+        } else {
+            ok = profileManager.updateProfile(profileId, data)
+        }
+
+        if (ok) {
+            showStatus("Profile saved ✓", true)
+            Qt.callLater(function() { root.back() })
+        } else {
+            showStatus("Save failed — check logs", false)
+        }
+    }
+
+    function showStatus(msg, ok) {
+        statusMsg = msg
+        statusOk  = ok
+        statusTimer.restart()
+    }
+
+    Timer {
+        id: statusTimer
+        interval: 3000
+        onTriggered: statusMsg = ""
+    }
+
+    // ── Layout ────────────────────────────────────────────────────────────
+    ColumnLayout {
+        anchors.fill: parent
+        spacing: 0
+
+        // ── Header ──────────────────────────────────────────────────────
+        Rectangle {
+            Layout.fillWidth: true
+            height: 56
+            color: "transparent"
+
+            RowLayout {
+                anchors { fill: parent; leftMargin: 24; rightMargin: 24 }
+
+                // Back button
+                Rectangle {
+                    width: 32; height: 32; radius: 8; color: surface
+                    Text {
+                        anchors.centerIn: parent; text: "←"
+                        color: textPrimary; font.pixelSize: 16
+                    }
+                    MouseArea {
+                        anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                        onClicked: root.back()
                     }
                 }
 
-                // Proxy Section
-                SectionCard {
-                    title: "Proxy Configuration"
-                    content: Column {
-                        spacing: 16
+                Item { width: 12 }
 
-                        Row {
-                            spacing: 12
-                            Repeater {
-                                model: ["None", "HTTP", "SOCKS5"]
-                                Rectangle {
-                                    width: 80; height: 34; radius: 8
-                                    color: index === 0 ? accent : surface
-                                    border.color: index === 0 ? "transparent" : border
-                                    Text {
-                                        anchors.centerIn: parent; text: modelData
-                                        color: index === 0 ? "white" : textSub
-                                        font { pixelSize: 12; weight: Font.Medium }
-                                    }
-                                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor }
-                                }
-                            }
-                        }
-
-                        FormField { label: "Host"; placeholder: "proxy.example.com" }
-                        Row {
-                            spacing: 12
-                            FormField { label: "Port"; placeholder: "1080"; width_: 120 }
-                            FormField { label: "Username"; placeholder: "Optional" }
-                            FormField { label: "Password"; placeholder: "Optional"; password: true }
-                        }
-
-                        // Test proxy button
-                        Rectangle {
-                            width: 130; height: 36; radius: 8; color: surface; border.color: border
-                            Text { anchors.centerIn: parent; text: "⚡ Test Proxy"; color: accent; font { pixelSize: 13 } }
-                            MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor }
-                        }
+                Column {
+                    spacing: 2
+                    Text {
+                        text: isNew ? "New Profile" : "Edit Profile"
+                        color: textPrimary
+                        font { pixelSize: 18; weight: Font.Bold; family: "Segoe UI" }
+                    }
+                    Text {
+                        visible: !isNew && root.profile.name
+                        text: root.profile.name || ""
+                        color: textSub; font.pixelSize: 12
                     }
                 }
+
+                Item { Layout.fillWidth: true }
+
+                // Status message
+                Text {
+                    visible: statusMsg !== ""
+                    text: statusMsg
+                    color: statusOk ? green : red
+                    font { pixelSize: 12; weight: Font.Medium }
+                    Behavior on opacity { NumberAnimation { duration: 200 } }
+                }
+
+                Item { width: 12 }
 
                 // Save button
                 Rectangle {
-                    Layout.fillWidth: true; height: 46; radius: 12
+                    width: 110; height: 36; radius: 10
                     gradient: Gradient {
                         orientation: Gradient.Horizontal
                         GradientStop { position: 0.0; color: accent }
                         GradientStop { position: 1.0; color: "#A855F7" }
                     }
-                    Text { anchors.centerIn: parent; text: "Save Profile"; color: "white"; font { pixelSize: 14; weight: Font.DemiBold } }
-                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: back() }
+                    Text {
+                        anchors.centerIn: parent; text: "💾 Save"
+                        color: "white"; font { pixelSize: 13; weight: Font.DemiBold }
+                    }
+                    MouseArea {
+                        anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                        onClicked: root.saveProfile()
+                    }
+                    scale: saveBtnMa.pressed ? 0.95 : 1.0
+                    MouseArea { id: saveBtnMa; anchors.fill: parent; hoverEnabled: true }
+                    Behavior on scale { NumberAnimation { duration: 80 } }
                 }
-
-                Item { height: 20 }
             }
         }
-    }
+
+        // ── Tab Bar ──────────────────────────────────────────────────────
+        Rectangle {
+            Layout.fillWidth: true; height: 1; color: border
+        }
+        TabBar {
+            id: editorTabs
+            Layout.fillWidth: true
+            tabs:     ["Basic", "Proxy", "Fingerprint", "Geo", "Extensions"]
+            tabIcons: ["👤",    "🌐",    "🖥",           "📍",  "🧩"]
+        }
+        Rectangle {
+            Layout.fillWidth: true; height: 1; color: border
+        }
+
+        // ── Tab Content ──────────────────────────────────────────────────
+        StackLayout {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            currentIndex: editorTabs.currentIndex
+
+            // ════════════════════════════════════════════════════════════
+            // TAB 0 — Basic
+            // ════════════════════════════════════════════════════════════
+            ScrollView {
+                clip: true; Layout.fillWidth: true; Layout.fillHeight: true
+                ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+
+                Column {
+                    width: parent.width; spacing: 0
+
+                    // Padding
+                    Item { width: 1; height: 24 }
+
+                    // Profile Name
+                    SectionCard {
+                        title: "Identity"; icon: "👤"
+
+                        content: Column {
+                            spacing: 16; width: parent.width
+
+                            FieldLabel { text: "Profile Name *" }
+                            StyledField {
+                                id: nameField
+                                placeholder: "e.g. Facebook Account #1"
+                                width: parent.width
+                            }
+
+                            FieldLabel { text: "Notes" }
+                            StyledArea {
+                                id: notesField
+                                placeholder: "Optional notes, tags, or reminders..."
+                                width: parent.width; height: 80
+                            }
+                        }
+                    }
+
+                    // OS Selection
+                    SectionCard {
+                        title: "Operating System"; icon: "💻"
+
+                        content: Column {
+                            spacing: 16; width: parent.width
+
+                            FieldLabel { text: "OS Profile" }
+                            RowLayout {
+                                width: parent.width; spacing: 10
+
+                                Repeater {
+                                    id: osSelector
+                                    model: [
+                                        { id: "windows10", label: "Windows 10", icon: "🪟" },
+                                        { id: "windows11", label: "Windows 11", icon: "🪟" },
+                                        { id: "linux",     label: "Linux",      icon: "🐧" }
+                                    ]
+                                    property int currentIndex: 0
+
+                                    Rectangle {
+                                        width: 140; height: 68; radius: 10
+                                        color: osSelector.currentIndex === index ? "#6C63FF18" : surface
+                                        border.color: osSelector.currentIndex === index ? accent : border
+                                        border.width: osSelector.currentIndex === index ? 1.5 : 1
+
+                                        Column {
+                                            anchors.centerIn: parent; spacing: 4
+                                            Text {
+                                                anchors.horizontalCenter: parent.horizontalCenter
+                                                text: modelData.icon; font.pixelSize: 22
+                                            }
+                                            Text {
+                                                anchors.horizontalCenter: parent.horizontalCenter
+                                                text: modelData.label
+                                                color: osSelector.currentIndex === index ? textPrimary : textSub
+                                                font { pixelSize: 12; weight: Font.Medium }
+                                            }
+                                        }
+
+                                        MouseArea {
+                                            anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                                            onClicked: osSelector.currentIndex = index
+                                        }
+
+                                        Behavior on color { ColorAnimation { duration: 150 } }
+                                        Behavior on border.color { ColorAnimation { duration: 150 } }
+                                    }
+                                }
+                            }
+
+                            Text {
+                                width: parent.width; wrapMode: Text.Wrap
+                                text: "• Fonts, Speech Voices, UA Platform, and GPU vendor will auto-match the selected OS."
+                                color: textSub; font.pixelSize: 11
+                            }
+                        }
+                    }
+
+                    Item { height: 24 }
+                }
+            }
+
+            // ════════════════════════════════════════════════════════════
+            // TAB 1 — Proxy
+            // ════════════════════════════════════════════════════════════
+            ScrollView {
+                clip: true; Layout.fillWidth: true; Layout.fillHeight: true
+                ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+
+                Column {
+                    width: parent.width; spacing: 0
+                    Item { height: 24 }
+
+                    SectionCard {
+                        title: "Proxy Configuration"; icon: "🌐"
+
+                        content: Column {
+                            spacing: 16; width: parent.width
+
+                            // Proxy type info chips
+                            Row {
+                                spacing: 8
+                                Repeater {
+                                    model: ["HTTP", "HTTPS", "SOCKS4", "SOCKS5", "SSH"]
+                                    Rectangle {
+                                        width: proxyChipText.implicitWidth + 16; height: 24; radius: 6
+                                        color: surface; border.color: border
+                                        Text {
+                                            id: proxyChipText
+                                            anchors.centerIn: parent; text: modelData
+                                            color: textSub; font.pixelSize: 11
+                                        }
+                                    }
+                                }
+                            }
+
+                            FieldLabel { text: "Proxy String (paste any format)" }
+
+                            // Proxy paste field
+                            Rectangle {
+                                width: parent.width; height: 42; radius: 8
+                                color: surface
+                                border.color: proxyInput.activeFocus ? accent : border
+
+                                TextField {
+                                    id: proxyInput
+                                    anchors { fill: parent; margins: 1 }
+                                    placeholderText: "socks5://user:pass@host:1080  or  http://host:port  or  host:port:user:pass"
+                                    placeholderTextColor: textSub
+                                    color: textPrimary
+                                    background: Item {}
+                                    padding: 12
+                                    font.family: "Consolas"
+                                    font.pixelSize: 12
+                                    onTextChanged: parsedProxy.visible = false
+                                }
+                            }
+
+                            // Parsed preview
+                            Rectangle {
+                                id: parsedProxy
+                                visible: false
+                                width: parent.width; height: visible ? 38 : 0; radius: 8
+                                color: "#22D3A510"; border.color: "#22D3A530"
+
+                                RowLayout {
+                                    anchors { fill: parent; leftMargin: 12; rightMargin: 12 }
+                                    Text { text: "✓ Parsed:"; color: green; font.pixelSize: 12 }
+                                    Text {
+                                        id: parsedText
+                                        color: textPrimary; font { pixelSize: 12; family: "Consolas" }
+                                        elide: Text.ElideRight
+                                        Layout.fillWidth: true
+                                    }
+                                }
+                            }
+
+                            // Buttons row
+                            RowLayout {
+                                width: parent.width; spacing: 10
+
+                                // Parse button
+                                ActionButton {
+                                    text: "Parse"
+                                    icon: "🔍"
+                                    onClicked: {
+                                        if (!proxyInput.text.trim()) return
+                                        var p = profileManager.parseProxy(proxyInput.text.trim())
+                                        if (p.valid) {
+                                            parsedText.text = p.proxy_type.toUpperCase() + " · " +
+                                                              (p.proxy_username ? p.proxy_username + "@" : "") +
+                                                              p.proxy_host + ":" + p.proxy_port
+                                            parsedProxy.visible = true
+                                        } else {
+                                            root.showStatus("Could not parse proxy format", false)
+                                        }
+                                    }
+                                }
+
+                                // Test Proxy button
+                                ActionButton {
+                                    text: root.proxyTesting ? "Testing..." : "Test IP"
+                                    icon: root.proxyTesting ? "⏳" : "⚡"
+                                    accent: true
+                                    enabled: proxyInput.text.trim() !== "" && !root.proxyTesting
+                                    onClicked: {
+                                        // Save first then test via IPC
+                                        if (!proxyInput.text.trim()) return
+                                        root.proxyTesting = true
+                                        ipResultCard.loading = true
+                                        ipResultCard.visible = true
+
+                                        var parsed = profileManager.parseProxy(proxyInput.text.trim())
+                                        // Send TEST_PROXY to Node.js via IPC
+                                        // Result arrives via profileManager signal
+                                        ipcClient.send("test_proxy", {
+                                            profileId: root.profileId || "temp",
+                                            proxy: parsed
+                                        })
+                                    }
+                                }
+
+                                Item { Layout.fillWidth: true }
+
+                                // Kill switch toggle
+                                RowLayout {
+                                    spacing: 8
+                                    Text { text: "Kill Switch"; color: textSub; font.pixelSize: 12 }
+                                    Switch {
+                                        id: killSwitch
+                                        checked: true
+                                        Material.accent: accent
+                                    }
+                                }
+                            }
+
+                            // Kill switch explanation
+                            Text {
+                                text: "• Kill Switch: Profile stops working if proxy disconnects. Real IP never leaks."
+                                color: textSub; font.pixelSize: 11
+                                width: parent.width; wrapMode: Text.Wrap
+                            }
+
+                            // IP Result Card
+                            ProxyResultCard {
+                                id: ipResultCard
+                                width: parent.width
+                                visible: false
+                                ipAddress:    root.profile.ip_address || ""
+                                ipCountry:    root.profile.ip_country || ""
+                                ipCountryCode:root.profile.ip_country_code || ""
+                                ipCity:       root.profile.ip_city || ""
+                                ipIsp:        root.profile.ip_isp || ""
+                                ipAsn:        root.profile.ip_asn || ""
+                                ipScore:      root.profile.ip_score !== undefined ? root.profile.ip_score : -1
+                                ipType:       root.profile.ip_type || ""
+                                ipTested:     root.profile.ip_last_tested || ""
+                            }
+                        }
+                    }
+
+                    Item { height: 24 }
+                }
+            }
+
+            // ════════════════════════════════════════════════════════════
+            // TAB 2 — Fingerprint
+            // ════════════════════════════════════════════════════════════
+            ScrollView {
+                clip: true; Layout.fillWidth: true; Layout.fillHeight: true
+                ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+
+                Column {
+                    width: parent.width; spacing: 0
+                    Item { height: 24 }
+
+                    // Generate fingerprint button
+                    SectionCard {
+                        title: "Fingerprint Generation"; icon: "🖥"
+
+                        content: Column {
+                            spacing: 16; width: parent.width
+
+                            RowLayout {
+                                width: parent.width; spacing: 10
+
+                                ActionButton {
+                                    text: root.fpGenerating ? "Generating..." : "Auto Generate"
+                                    icon: root.fpGenerating ? "⏳" : "✨"
+                                    accent: true
+                                    enabled: !root.fpGenerating
+                                    onClicked: {
+                                        root.fpGenerating = true
+                                        // Send GENERATE_FP to Node.js
+                                        ipcClient.send("generate_fp", {
+                                            profileId:  root.profileId || "temp",
+                                            osType:     ["windows10","windows11","linux"][osSelector.currentIndex],
+                                            resolution: resolutionCombo.currentText,
+                                            ipData:     {
+                                                ip:          root.profile.ip_address,
+                                                countryCode: root.profile.ip_country_code,
+                                                timezone:    root.profile.ip_timezone,
+                                                lat:         root.profile.ip_lat,
+                                                lng:         root.profile.ip_lng,
+                                            },
+                                            hardwareConcurrency: parseInt(cpuCombo.currentText),
+                                            deviceMemory:        parseInt(ramCombo.currentText),
+                                            noiseLevel:          Math.round(noiseSlider.value),
+                                        })
+                                    }
+                                }
+
+                                Text {
+                                    text: "Uses OS + IP data to build a consistent, realistic fingerprint"
+                                    color: textSub; font.pixelSize: 12
+                                    Layout.fillWidth: true; wrapMode: Text.Wrap
+                                }
+                            }
+                        }
+                    }
+
+                    // Screen
+                    SectionCard {
+                        title: "Screen & Display"; icon: "🖥"
+
+                        content: Column {
+                            spacing: 16; width: parent.width
+
+                            Row {
+                                spacing: 20; width: parent.width
+
+                                Column {
+                                    spacing: 6
+                                    FieldLabel { text: "Resolution" }
+                                    ComboBoxStyled {
+                                        id: resolutionCombo
+                                        model: ["1920x1080", "2560x1440", "1366x768", "1440x900", "1280x720", "3840x2160"]
+                                        width: 160
+                                    }
+                                }
+
+                                Column {
+                                    spacing: 6
+                                    FieldLabel { text: "Device Pixel Ratio" }
+                                    ComboBoxStyled {
+                                        model: ["1.0", "1.25", "1.5", "2.0"]
+                                        width: 100
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Hardware
+                    SectionCard {
+                        title: "Hardware"; icon: "⚙️"
+
+                        content: Column {
+                            spacing: 16; width: parent.width
+
+                            Row {
+                                spacing: 20
+
+                                Column {
+                                    spacing: 6
+                                    FieldLabel { text: "CPU Cores" }
+                                    ComboBoxStyled {
+                                        id: cpuCombo
+                                        model: ["2", "4", "6", "8", "12", "16"]
+                                        currentIndex: 3   // default 8
+                                        width: 100
+                                    }
+                                }
+
+                                Column {
+                                    spacing: 6
+                                    FieldLabel { text: "RAM (GB)" }
+                                    ComboBoxStyled {
+                                        id: ramCombo
+                                        model: ["2", "4", "8", "16"]
+                                        currentIndex: 2   // default 8
+                                        width: 100
+                                    }
+                                }
+
+                                Column {
+                                    spacing: 6
+                                    FieldLabel { text: "Max Touch Points" }
+                                    ComboBoxStyled {
+                                        model: ["0 (Desktop)", "1", "5", "10"]
+                                        width: 140
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Canvas & Audio Noise
+                    SectionCard {
+                        title: "Anti-Detection Noise"; icon: "🎨"
+
+                        content: Column {
+                            spacing: 16; width: parent.width
+
+                            // Canvas noise
+                            Column {
+                                spacing: 8; width: parent.width
+
+                                RowLayout {
+                                    width: parent.width
+                                    FieldLabel { text: "Canvas Noise Level" }
+                                    Item { Layout.fillWidth: true }
+                                    Text {
+                                        text: ["Off", "Subtle", "Normal", "Strong"][Math.round(noiseSlider.value)]
+                                        color: accent; font { pixelSize: 12; weight: Font.DemiBold }
+                                    }
+                                }
+
+                                Slider {
+                                    id: noiseSlider
+                                    width: parent.width
+                                    from: 0; to: 3; stepSize: 1; value: 2
+                                    Material.accent: accent
+                                }
+
+                                Text {
+                                    text: "Adds imperceptible pixel noise to <canvas> draws. Breaks canvas fingerprinting without visual change."
+                                    color: textSub; font.pixelSize: 11
+                                    width: parent.width; wrapMode: Text.Wrap
+                                }
+                            }
+
+                            // Audio noise
+                            Column {
+                                spacing: 8; width: parent.width
+
+                                RowLayout {
+                                    width: parent.width
+                                    FieldLabel { text: "AudioContext Noise Level" }
+                                    Item { Layout.fillWidth: true }
+                                    Text {
+                                        text: ["Off", "Subtle", "Normal", "Strong"][Math.round(audioNoiseSlider.value)]
+                                        color: accent; font { pixelSize: 12; weight: Font.DemiBold }
+                                    }
+                                }
+
+                                Slider {
+                                    id: audioNoiseSlider
+                                    width: parent.width
+                                    from: 0; to: 3; stepSize: 1; value: 1
+                                    Material.accent: accent
+                                }
+                            }
+
+                            // WebGL
+                            RowLayout {
+                                width: parent.width
+                                Text { text: "WebGL Vendor/Renderer Override"; color: textSub; font.pixelSize: 12 }
+                                Item { Layout.fillWidth: true }
+                                Switch {
+                                    checked: true
+                                    Material.accent: accent
+                                }
+                            }
+
+                            // WebRTC
+                            RowLayout {
+                                width: parent.width
+                                Column {
+                                    spacing: 2
+                                    Text { text: "WebRTC Leak Prevention"; color: textSub; font.pixelSize: 12 }
+                                    Text { text: "Disable STUN/ICE — all WebRTC routed via proxy"; color: textSub; font.pixelSize: 10 }
+                                }
+                                Item { Layout.fillWidth: true }
+                                Switch {
+                                    checked: true; enabled: false   // always on
+                                    Material.accent: accent
+                                }
+                            }
+                        }
+                    }
+
+                    Item { height: 24 }
+                }
+            }
+
+            // ════════════════════════════════════════════════════════════
+            // TAB 3 — Geo
+            // ════════════════════════════════════════════════════════════
+            ScrollView {
+                clip: true; Layout.fillWidth: true; Layout.fillHeight: true
+                ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+
+                Column {
+                    width: parent.width; spacing: 0
+                    Item { height: 24 }
+
+                    SectionCard {
+                        title: "Geolocation"; icon: "📍"
+
+                        content: Column {
+                            spacing: 16; width: parent.width
+
+                            // Mode selector
+                            FieldLabel { text: "Geolocation Mode" }
+                            RowLayout {
+                                width: parent.width; spacing: 10
+
+                                Repeater {
+                                    id: geoModeSelector
+                                    property int currentIndex: 0
+                                    model: [
+                                        { id: "proxy",    label: "From Proxy IP",    icon: "🌐", desc: "Auto coords from exit IP" },
+                                        { id: "custom",   label: "Custom",           icon: "📌", desc: "Manual lat/lng" },
+                                        { id: "disabled", label: "Disabled",         icon: "🚫", desc: "Block geo requests" },
+                                    ]
+
+                                    property string currentText: model[currentIndex].id
+
+                                    Rectangle {
+                                        width: 150; height: 80; radius: 10
+                                        color: geoModeSelector.currentIndex === index ? "#6C63FF18" : surface
+                                        border.color: geoModeSelector.currentIndex === index ? accent : border
+
+                                        Column {
+                                            anchors.centerIn: parent; spacing: 4
+                                            Text {
+                                                anchors.horizontalCenter: parent.horizontalCenter
+                                                text: modelData.icon; font.pixelSize: 20
+                                            }
+                                            Text {
+                                                anchors.horizontalCenter: parent.horizontalCenter
+                                                text: modelData.label
+                                                color: geoModeSelector.currentIndex === index ? textPrimary : textSub
+                                                font { pixelSize: 12; weight: Font.Medium }
+                                            }
+                                            Text {
+                                                anchors.horizontalCenter: parent.horizontalCenter
+                                                text: modelData.desc
+                                                color: textSub; font.pixelSize: 10
+                                            }
+                                        }
+
+                                        MouseArea {
+                                            anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                                            onClicked: geoModeSelector.currentIndex = index
+                                        }
+                                        Behavior on color { ColorAnimation { duration: 150 } }
+                                    }
+                                }
+                            }
+
+                            // Coordinates (shown when not proxy mode)
+                            Rectangle {
+                                visible: geoModeSelector.currentIndex === 1
+                                width: parent.width; height: visible ? geoCoords.implicitHeight + 24 : 0
+                                color: surface; radius: 10; border.color: border; clip: true
+
+                                Column {
+                                    id: geoCoords
+                                    anchors { fill: parent; margins: 16 }
+                                    spacing: 12
+
+                                    Row {
+                                        spacing: 16
+
+                                        Column {
+                                            spacing: 6
+                                            FieldLabel { text: "Latitude" }
+                                            StyledField {
+                                                placeholder: "40.7128"; width: 180
+                                                text: root.profile.ip_lat ? root.profile.ip_lat.toString() : ""
+                                            }
+                                        }
+
+                                        Column {
+                                            spacing: 6
+                                            FieldLabel { text: "Longitude" }
+                                            StyledField {
+                                                placeholder: "-74.0060"; width: 180
+                                                text: root.profile.ip_lng ? root.profile.ip_lng.toString() : ""
+                                            }
+                                        }
+
+                                        Column {
+                                            spacing: 6
+                                            FieldLabel { text: "Accuracy (m)" }
+                                            StyledField { placeholder: "50"; width: 100 }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Show current geo from IP
+                            Rectangle {
+                                visible: geoModeSelector.currentIndex === 0 && root.profile.ip_lat !== 0
+                                width: parent.width; height: visible ? 50 : 0
+                                color: "#6C63FF10"; radius: 8; border.color: "#6C63FF30"
+
+                                Row {
+                                    anchors { left: parent.left; verticalCenter: parent.verticalCenter; leftMargin: 16 }
+                                    spacing: 12
+                                    Text { text: "📍"; font.pixelSize: 18 }
+                                    Column {
+                                        anchors.verticalCenter: parent.verticalCenter; spacing: 2
+                                        Text {
+                                            text: root.profile.ip_lat.toFixed(4) + ", " + root.profile.ip_lng.toFixed(4)
+                                            color: textPrimary; font { pixelSize: 13; family: "Consolas" }
+                                        }
+                                        Text {
+                                            text: root.profile.ip_city + ", " + root.profile.ip_country + " · " + root.profile.ip_timezone
+                                            color: textSub; font.pixelSize: 11
+                                        }
+                                    }
+                                }
+                            }
+
+                            Text {
+                                text: "• Geolocation requests from websites will return the proxy exit location.\n• Timezone and language are also auto-set from IP."
+                                color: textSub; font.pixelSize: 11
+                                width: parent.width; wrapMode: Text.Wrap
+                            }
+                        }
+                    }
+
+                    Item { height: 24 }
+                }
+            }
+
+            // ════════════════════════════════════════════════════════════
+            // TAB 4 — Extensions
+            // ════════════════════════════════════════════════════════════
+            Item {
+                Rectangle {
+                    anchors.centerIn: parent
+                    color: "transparent"
+                    Column {
+                        anchors.centerIn: parent; spacing: 16
+                        Text { anchors.horizontalCenter: parent.horizontalCenter; text: "🧩"; font.pixelSize: 48 }
+                        Text {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            text: "Extensions — Coming Soon"
+                            color: textPrimary; font { pixelSize: 16; weight: Font.DemiBold }
+                        }
+                        Text {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            text: "Per-profile extension management will be available in the next update."
+                            color: textSub; font.pixelSize: 13
+                        }
+                    }
+                }
+            }
+
+        }  // StackLayout end
+    }  // ColumnLayout end
+
+    // ─── Reusable inline components ──────────────────────────────────────
 
     component SectionCard: Rectangle {
         property string title: ""
+        property string icon: ""
         property Item content
+
         Layout.fillWidth: true
-        height: contentColumn.implicitHeight + 56
+        width: parent ? parent.width - 48 : 600
+        anchors.horizontalCenter: parent ? parent.horizontalCenter : undefined
+        height: cardCol.implicitHeight + 48
         radius: 14; color: bgCard; border.color: border
 
         Column {
-            id: contentColumn
-            anchors.fill: parent
-            anchors.margins: 20
+            id: cardCol
+            anchors { fill: parent; margins: 24 }
             spacing: 16
 
-            Text {
-                text: title; color: textPrimary
-                font { pixelSize: 14; weight: Font.DemiBold }
+            // Section header
+            Row {
+                spacing: 8
+                Text { text: icon; font.pixelSize: 16 }
+                Text {
+                    text: title; color: textPrimary
+                    font { pixelSize: 14; weight: Font.DemiBold; family: "Segoe UI" }
+                }
             }
             Rectangle { width: parent.width; height: 1; color: border }
         }
 
         onContentChanged: {
             if (content) {
-                content.parent = contentColumn;
+                content.parent = cardCol
             }
         }
     }
 
-    component FormField: Column {
-        property string label: ""
+    component FieldLabel: Text {
+        color: textSub; font.pixelSize: 12; font.family: "Segoe UI"
+    }
+
+    component StyledField: Rectangle {
+        property alias text: tf.text
         property string placeholder: ""
-        property bool multiline: false
         property bool password: false
-        property int width_: 0
 
-        spacing: 6
-        width: width_ > 0 ? width_ : parent.width
+        height: 40; radius: 8; color: surface
+        border.color: tf.activeFocus ? accent : border
 
-        Text { text: label; color: textSub; font.pixelSize: 12 }
-        Rectangle {
-            width: parent.width
-            height: multiline ? 80 : 40; radius: 8
-            color: surface; border.color: border
+        TextField {
+            id: tf
+            anchors { fill: parent; margins: 1 }
+            placeholderText: parent.placeholder
+            placeholderTextColor: textSub
+            color: textPrimary
+            background: Item {}
+            padding: 12
+            font { pixelSize: 13; family: "Segoe UI" }
+            echoMode: parent.password ? TextInput.Password : TextInput.Normal
+        }
+    }
 
-            TextArea {
-                visible: multiline
-                anchors.fill: parent
-                padding: 10
-                placeholderText: placeholder
-                placeholderTextColor: textSub
-                color: textPrimary
-                background: Item {}
-                wrapMode: Text.Wrap
-            }
-            TextField {
-                visible: !multiline
-                anchors.fill: parent
-                padding: 12
-                placeholderText: placeholder
-                placeholderTextColor: textSub
-                color: textPrimary
-                background: Item {}
-                echoMode: password ? TextInput.Password : TextInput.Normal
+    component StyledArea: Rectangle {
+        property alias text: ta.text
+        property string placeholder: ""
+
+        radius: 8; color: surface; border.color: ta.activeFocus ? accent : border
+
+        TextArea {
+            id: ta
+            anchors.fill: parent
+            padding: 12
+            placeholderText: parent.placeholder
+            placeholderTextColor: textSub
+            color: textPrimary
+            background: Item {}
+            wrapMode: Text.Wrap
+            font { pixelSize: 13; family: "Segoe UI" }
+        }
+    }
+
+    component ComboBoxStyled: ComboBox {
+        implicitHeight: 40
+        background: Rectangle {
+            color: surface; radius: 8; border.color: border
+        }
+        contentItem: Text {
+            leftPadding: 12
+            text: parent.displayText
+            color: textPrimary
+            verticalAlignment: Text.AlignVCenter
+            font { pixelSize: 13; family: "Segoe UI" }
+        }
+        popup.background: Rectangle { color: bgCard; radius: 8; border.color: border }
+    }
+
+    component ActionButton: Rectangle {
+        property string text: ""
+        property string icon: ""
+        property bool accent: false
+        property bool enabled: true
+        signal clicked()
+
+        width: btnRow.implicitWidth + 28; height: 36; radius: 8
+        color: {
+            if (!enabled) return surface
+            if (accent)   return accentDark
+            return surface
+        }
+        border.color: accent ? "transparent" : border
+        opacity: enabled ? 1.0 : 0.5
+
+        RowLayout {
+            id: btnRow
+            anchors.centerIn: parent; spacing: 6
+            Text { text: parent.parent.icon; font.pixelSize: 14 }
+            Text {
+                text: parent.parent.text
+                color: parent.parent.accent ? "white" : textPrimary
+                font { pixelSize: 13; weight: Font.Medium }
             }
         }
+
+        MouseArea {
+            anchors.fill: parent
+            cursorShape: parent.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+            onClicked: if (parent.enabled) parent.clicked()
+        }
+
+        Behavior on color { ColorAnimation { duration: 120 } }
     }
 }

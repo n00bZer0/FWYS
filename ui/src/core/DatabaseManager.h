@@ -31,6 +31,9 @@ public:
 
 private:
     void createSchema();
+    void migrateSchema();   // ALTER TABLE for existing DBs
+    bool columnExists(const QString& table, const QString& column);
+
     QSqlDatabase m_db;
     QString m_dbPath;
     QString m_dataPath;

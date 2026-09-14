@@ -248,6 +248,56 @@ python scripts\build_chromium.py
 
 ---
 
+## 🎯 What We Need To Do
+
+This roadmap outlines the complete technical execution blueprint for FWYS to counter next-generation bot-detection algorithms, deep iframe/worker script inspection, and statistical browser fingerprinting engines.
+
+### 1. Core Operating Philosophy: Proxy-First & Zero-Leak Architecture
+* **Exit-IP Driven Identity:** Every fingerprint property that correlates with network geography (`navigator.language`, `navigator.languages`, `Intl.DateTimeFormat().resolvedOptions().timeZone`, system date offsets, Accept-Language HTTP headers, and Geolocation latitude/longitude) **MUST** be strictly derived from the proxy's verified exit IP.
+* **Strict Proxy Kill-Switch:** Real public and local IP addresses must never be leaked under any circumstance. If a proxy disconnects or drops packets during an active session, the browser profile must immediately freeze or terminate rather than falling back to the host machine's direct connection.
+* **Full Network Stack Confinement:** WebRTC candidates, STUN requests, ICE negotiation, DNS queries, and TLS handshakes must be routed entirely through the proxy tunnel. WebRTC local IP enumeration is blocked at the native C++ level.
+* **Flawless Internal Consistency:** Detection systems (Cloudflare Turnstile, DataDome, Akamai, Kasada, CreepJS) cross-validate internal correlations. An inconsistent profile is flagged immediately. FWYS enforces 100% attribute alignment:
+  * Windows OS $\rightarrow$ `Win32` platform $\rightarrow$ Windows NT User-Agent $\rightarrow$ Windows system fonts $\rightarrow$ DirectX/ANGLE WebGL renderers $\rightarrow$ Windows SAPI speech voices.
+  * Target Country $\rightarrow$ Proxy IP $\rightarrow$ Localized Accept-Language $\rightarrow$ Aligned Timezone $\rightarrow$ Regional coordinates.
+
+---
+
+### 2. Comprehensive 10-Layer Fingerprint Spoofing & Defense Matrix
+
+| Layer | Target Fingerprint Surface | Spoofing & Neutralization Method | Detection Vector Addressed |
+| :--- | :--- | :--- | :--- |
+| **1. HTTP & Network Headers** | `User-Agent`, `Accept-Language`, `Sec-CH-UA`, `Sec-CH-UA-Platform`, `Sec-CH-UA-Mobile`, `Sec-Fetch-*` | CDP dynamic header override & native C++ command-line flags | Discrepancies between JavaScript navigator and HTTP request headers |
+| **2. TLS & Transport** | JA3/JA4 TLS ClientHello fingerprints, HTTP/2 frame priority/window settings, TCP/IP stack signatures | Tunneled proxy routing + Chromium C++ network stack defaults | Network-layer fingerprint matching (e.g., Akamai / Cloudflare edge scoring) |
+| **3. JavaScript Navigator** | `navigator.webdriver`, `hardwareConcurrency`, `deviceMemory`, `maxTouchPoints`, `plugins`, `mimeTypes` | **C++ Blink kernel patch** (`webdriver = false`) + CDP runtime emulation | Primary bot/automation flags, Selenium/Puppeteer detection |
+| **4. Screen & Viewport** | `screen.width/height`, `availWidth/availHeight`, `devicePixelRatio`, `innerWidth/innerHeight`, `screenX/Y` | CDP window bounds configuration with realistic taskbar offsets | Viewport vs monitor resolution mismatch, headless dimensions detection |
+| **5. Canvas & WebGL** | 2D Canvas rendering hash, `WEBGL_debug_renderer_info`, WebGL extensions, WebGPU, OffscreenCanvas | **C++ Blink/Skia patch** (seeded deterministic pixel noise + unmasked vendor/renderer spoof) | Canvas hash tracking, GPU model profiling, prototype hooking detection |
+| **6. AudioContext** | `AudioBuffer`, `OfflineAudioContext`, oscillator frequency analysis, `sampleRate` | **C++ WebAudio patch** (seeded micro-perturbations in audio sample output) | Audio hardware/codec signature identification |
+| **7. Font Fingerprinting** | Installed system fonts enumeration via CSS `@font-face` and Canvas measureText | **C++ FontPlatform patch** + OS-specific font whitelist injection | Operating system mismatch (e.g., Linux fonts on Windows User-Agent) |
+| **8. Timing & Bot Behavior** | `performance.now()` precision, timestamp consistency, high-resolution timers | C++ timer quantization and jitter injection | Fingerprinting timing attacks, automated execution detection |
+| **9. Hardware & System APIs** | `navigator.getBattery()`, Gamepad API, WebUSB, WebBluetooth, SpeechSynthesis voices | C++ API containment (returning realistic empty/mocked descriptors matching the OS) | API surface fingerprinting across specialized hardware interfaces |
+| **10. Deep Injections & Iframes** | Hidden cross-origin iframes, Web Workers, `ServiceWorker`, `SharedWorker` contexts | **C++ Blink native integration** ensuring patches persist across all execution realms | Evasion checks where scripts execute inside iframes/workers to bypass window prototype hooks |
+
+---
+
+### 3. Integration Blueprint: `scrapfly/fingerprint-generator` (Offline Model)
+* **Role in FWYS:** Used as a Bayesian neural network generator during **profile creation** to generate mathematically realistic, real-world hardware and client combinations (eliminating impossible configurations like 32-core mobile devices or incompatible GPU/OS pairs).
+* **Execution Flow:**
+  1. Profile configuration invokes local Python `fpgen` module via Node.js IPC.
+  2. `fpgen` generates base hardware attributes (GPU vendor, renderer, screen bounds, fonts, concurrency, memory).
+  3. Live Proxy IP inspection extracts network geography (Country, Language, Timezone, ASN, ISP).
+  4. Network parameters override the base template to create a consistent profile stored in `profiles.db`.
+  5. At launch, C++ engine flags and CDP injection scripts consume the saved JSON profile without any runtime Python overhead.
+
+---
+
+### 4. Next Implementation Milestones
+- [ ] **Universal Proxy Parser & Manager:** Auto-parse pasted proxy strings in any format (`HTTP`, `HTTPS`, `SOCKS4`, `SOCKS5`, `SSH`), bulk management, latency testing, and fail-safe kill-switch.
+- [ ] **Multi-Source IP Intelligence Engine:** Query `ip-api.com`, `ipdata.co`, and `ipinfo.io` in parallel to aggregate risk scores, ISP classification, and exact timezone/coordinates.
+- [ ] **Extended Profile Creator UI (QML/C++):** Intuitive controls for OS selection, resolution presets, proxy linking, and extension bundle management.
+- [ ] **Worker & Iframe Defense Verification:** Implement automated tests confirming that Canvas, WebGL, and Navigator spoofs hold true inside nested iframes and Web Workers.
+
+---
+
 ## 🧪 Testing & Verification
 
 Verify your spoofed profiles against top industry fingerprint detection and bot-scoring platforms:

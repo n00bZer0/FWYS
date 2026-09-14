@@ -1,27 +1,30 @@
+'use strict';
+
 /**
  * FWYS — Node.js Injection Layer
  * Main entry point
  *
- * Responsibilities:
- *  1. Start IPC server (named pipe) — receives commands from Qt UI
- *  2. Launch / attach to Chromium via CDP
- *  3. Inject stealth scripts on every new page
- *  4. Manage per-profile proxy + fingerprint config
+ * IPC Commands handled:
+ *   launch_profile   — launch browser with profile
+ *   close_profile    — close browser
+ *   test_proxy       — test proxy, return IP info
+ *   generate_fp      — generate fingerprint for profile
+ *   get_profile      — read profile from DB
  */
 
-'use strict';
-
-const IPCServer = require('./ipc/IPCServer');
-const CDPManager = require('./cdp/CDPManager');
-const ProfileReader = require('./profile/ProfileReader');
+const IPCServer          = require('./ipc/IPCServer');
+const CDPManager         = require('./cdp/CDPManager');
+const ProfileReader      = require('./profile/ProfileReader');
 const FingerprintGenerator = require('./profile/FingerprintGenerator');
+const { testProxy }      = require('./profile/iptest');
+const { generateFingerprint } = require('./profile/generator');
 
 const TEST_MODE = process.argv.includes('--test');
 
 async function main() {
   console.log('');
   console.log('  ╔══════════════════════════════════╗');
-  console.log('  ║   FWYS Injection Layer v1.0.0   ║');
+  console.log('  ║   FWYS Injection Layer v1.1.0   ║');
   console.log('  ╚══════════════════════════════════╝');
   console.log('');
 
@@ -31,17 +34,16 @@ async function main() {
     return;
   }
 
-  // Start IPC server — Qt UI connects to this
   const ipc = new IPCServer();
   await ipc.start();
 
-  // Listen for launch commands from Qt UI
+  // ── Launch browser with profile ──────────────────────────────────────────
   ipc.on('launch_profile', async (payload) => {
     const { profileId, chromiumPath, debugPort } = payload;
-    console.log(`  [IPC] Launch request: profile=${profileId}, port=${debugPort}`);
+    console.log(`  [IPC] Launch: profile=${profileId}, port=${debugPort}`);
 
     try {
-      const profile = await ProfileReader.load(profileId);
+      const profile     = await ProfileReader.load(profileId);
       const fingerprint = FingerprintGenerator.fromProfile(profile);
 
       const cdp = new CDPManager(profileId, chromiumPath, debugPort, fingerprint);
@@ -49,15 +51,70 @@ async function main() {
 
       ipc.send('launch_result', { profileId, success: true, pid: cdp.pid });
     } catch (err) {
-      console.error(`  [ERROR] Launch failed:`, err.message);
+      console.error('  [ERROR] Launch failed:', err.message);
       ipc.send('launch_result', { profileId, success: false, error: err.message });
     }
   });
 
+  // ── Close browser ────────────────────────────────────────────────────────
   ipc.on('close_profile', async (payload) => {
     const { profileId } = payload;
     CDPManager.closeProfile(profileId);
     ipc.send('close_result', { profileId, success: true });
+  });
+
+  // ── Test proxy → return IP data ──────────────────────────────────────────
+  ipc.on('test_proxy', async (payload) => {
+    const { profileId, proxy } = payload;
+    console.log(`  [IPC] Test proxy for profile=${profileId}:`, proxy?.type, proxy?.host);
+
+    try {
+      const ipData = await testProxy(proxy);
+      ipc.send('proxy_test_result', {
+        profileId,
+        success: true,
+        ipData,
+      });
+    } catch (err) {
+      console.error('  [ERROR] Proxy test failed:', err.message);
+      ipc.send('proxy_test_result', {
+        profileId,
+        success: false,
+        error: err.message,
+      });
+    }
+  });
+
+  // ── Generate fingerprint for profile ────────────────────────────────────
+  ipc.on('generate_fp', async (payload) => {
+    const { profileId, osType, resolution, ipData,
+            hardwareConcurrency, deviceMemory, noiseLevel } = payload;
+    console.log(`  [IPC] Generate fingerprint for profile=${profileId}, os=${osType}`);
+
+    try {
+      const fp = generateFingerprint({
+        profileId,
+        osType:              osType || 'windows10',
+        resolution:          resolution || null,
+        ipData:              ipData || {},
+        hardwareConcurrency: hardwareConcurrency || null,
+        deviceMemory:        deviceMemory || null,
+        noiseLevel:          noiseLevel || 2,
+      });
+
+      ipc.send('fp_generated', {
+        profileId,
+        success:     true,
+        fingerprint: fp,
+      });
+    } catch (err) {
+      console.error('  [ERROR] FP generation failed:', err.message);
+      ipc.send('fp_generated', {
+        profileId,
+        success: false,
+        error: err.message,
+      });
+    }
   });
 
   console.log('  [READY] FWYS injection layer started');
@@ -66,10 +123,15 @@ async function main() {
 
 async function runTests() {
   const tests = [
-    { name: 'ProfileReader', fn: () => require('./profile/ProfileReader').selfTest() },
+    { name: 'ProfileReader',     fn: () => require('./profile/ProfileReader').selfTest() },
     { name: 'FingerprintGenerator', fn: () => require('./profile/FingerprintGenerator').selfTest() },
-    { name: 'StealthLoader', fn: () => require('./stealth/StealthLoader').selfTest() },
-    { name: 'IPCServer', fn: () => require('./ipc/IPCServer').selfTest() },
+    { name: 'StealthLoader',     fn: () => require('./stealth/StealthLoader').selfTest() },
+    { name: 'IPCServer',         fn: () => require('./ipc/IPCServer').selfTest() },
+    { name: 'Generator',         fn: () => {
+        const fp = generateFingerprint({ profileId: 'test', osType: 'windows10' });
+        if (!fp.navigator || !fp.screen || !fp.gpu) throw new Error('Missing fields');
+        if (fp.navigator.webdriver !== false) throw new Error('webdriver must be false');
+    }},
   ];
 
   let passed = 0;
