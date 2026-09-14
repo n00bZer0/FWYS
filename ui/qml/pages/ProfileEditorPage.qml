@@ -1526,7 +1526,23 @@ Item {
             verticalAlignment: Text.AlignVCenter
             font { pixelSize: 13; family: "Segoe UI" }
         }
-        popup.background: Rectangle { color: bgCard; radius: 8; border.color: border }
+        delegate: ItemDelegate {
+            width: parent.width
+            height: 36
+            contentItem: Text {
+                leftPadding: 8
+                text: modelData
+                color: highlighted ? "white" : textPrimary
+                font { pixelSize: 13; family: "Segoe UI" }
+                verticalAlignment: Text.AlignVCenter
+            }
+            background: Rectangle {
+                color: highlighted ? accent : "transparent"
+                radius: 6
+            }
+            highlighted: parent.highlightedIndex === index
+        }
+        popup.background: Rectangle { color: bgCard; radius: 8; border.color: border; border.width: 1 }
     }
 
     component ActionButton: Rectangle {
