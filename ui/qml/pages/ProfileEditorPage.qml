@@ -107,7 +107,8 @@ Item {
 
         Column {
             id: contentColumn
-            anchors { fill: parent; margins: 20 }
+            anchors.fill: parent
+            anchors.margins: 20
             spacing: 16
 
             Text {
@@ -115,7 +116,12 @@ Item {
                 font { pixelSize: 14; weight: Font.DemiBold }
             }
             Rectangle { width: parent.width; height: 1; color: border }
-            Loader { sourceComponent: content ? content : null }
+        }
+
+        onContentChanged: {
+            if (content) {
+                content.parent = contentColumn;
+            }
         }
     }
 

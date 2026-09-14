@@ -103,10 +103,10 @@ Item {
                 delegate: Item {
                     width: grid.cellWidth
                     height: grid.cellHeight
-                    padding: 8
 
                     ProfileCard {
-                        anchors { fill: parent; margins: 8 }
+                        anchors.fill: parent
+                        anchors.margins: 8
                         pid:       profileId
                         pname:     profileName
                         proxy:     profileProxy

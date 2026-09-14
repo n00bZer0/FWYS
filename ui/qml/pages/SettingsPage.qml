@@ -159,8 +159,11 @@ Item {
                 height: 1
                 color: border
             }
-            Loader {
-                sourceComponent: content ? content : null
+        }
+
+        onContentChanged: {
+            if (content) {
+                content.parent = secCol;
             }
         }
     }
@@ -185,8 +188,18 @@ Item {
                 font.pixelSize: 11
             }
         }
-        Loader {
-            sourceComponent: control ? control : null
+
+        Item {
+            id: ctrlSlot
+            Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
+            implicitWidth: control ? control.implicitWidth || control.width : 0
+            implicitHeight: control ? control.implicitHeight || control.height : 0
+        }
+
+        onControlChanged: {
+            if (control) {
+                control.parent = ctrlSlot;
+            }
         }
     }
 }

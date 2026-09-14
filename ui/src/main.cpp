@@ -14,8 +14,36 @@
 #include "core/DatabaseManager.h"
 #include "models/ProfileListModel.h"
 
+#include <QFile>
+#include <QTextStream>
+#include <QDateTime>
+
+static void customLogHandler(QtMsgType type, const QMessageLogContext &context, const QString &msg)
+{
+    Q_UNUSED(context);
+    QString level;
+    switch (type) {
+    case QtDebugMsg:    level = "[DEBUG]"; break;
+    case QtInfoMsg:     level = "[INFO]"; break;
+    case QtWarningMsg:  level = "[WARN]"; break;
+    case QtCriticalMsg: level = "[CRIT]"; break;
+    case QtFatalMsg:    level = "[FATAL]"; break;
+    }
+    QString line = QString("%1 %2 %3\n")
+        .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz"), level, msg);
+
+    QFile file("fwys_debug.log");
+    if (file.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text)) {
+        QTextStream out(&file);
+        out << line;
+    }
+}
+
 int main(int argc, char *argv[])
 {
+    qInstallMessageHandler(customLogHandler);
+    qInfo() << "=== FWYS Starting ===";
+
     // Enable high-DPI scaling
     QGuiApplication::setHighDpiScaleFactorRoundingPolicy(
         Qt::HighDpiScaleFactorRoundingPolicy::PassThrough
@@ -61,11 +89,19 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty("appName", "FWYS");
 
     // Load main QML
-    const QUrl url(u"qrc:/FWYS/qml/main.qml"_qs);
+    QUrl url(u"qrc:/qt/qml/FWYS/qml/main.qml"_qs);
+    if (!QFile::exists(url.toString().mid(3))) { // check :/qt/qml/...
+        url = QUrl(u"qrc:/FWYS/qml/main.qml"_qs);
+    }
+    qInfo() << "Loading QML from:" << url;
+
     QObject::connect(
         &engine, &QQmlApplicationEngine::objectCreated,
         &app, [url](QObject *obj, const QUrl &objUrl) {
-            if (!obj && url == objUrl) QCoreApplication::exit(-1);
+            if (!obj && url == objUrl) {
+                qCritical() << "Failed to create root QML object for:" << objUrl;
+                QCoreApplication::exit(-1);
+            }
         },
         Qt::QueuedConnection
     );

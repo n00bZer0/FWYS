@@ -103,6 +103,7 @@ Item {
     }
 
     component FpGroup: Rectangle {
+        id: rootGroup
         property string title: ""
         property var model: []
         Layout.fillWidth: true
@@ -115,11 +116,11 @@ Item {
             anchors.margins: 16
             spacing: 12
 
-            Text { text: parent.title; color: textPrimary; font { pixelSize: 13; weight: Font.DemiBold } }
+            Text { text: rootGroup.title; color: textPrimary; font { pixelSize: 13; weight: Font.DemiBold } }
             Rectangle { width: parent.width; height: 1; color: border }
 
             Repeater {
-                model: parent.model
+                model: rootGroup.model
                 Row {
                     width: parent.width; spacing: 12
                     Text {
