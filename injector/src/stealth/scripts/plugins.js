@@ -46,41 +46,89 @@ const fakePlugins = [
   },
 ];
 
-// Create fake PluginArray
-function makeFakePluginArray(plugins) {
-  const arr = [];
-  plugins.forEach((p, i) => {
-    const plugin = {
-      name: p.name,
-      description: p.description,
-      filename: p.filename,
-      length: p.mimeTypes.length,
-    };
-    p.mimeTypes.forEach((mt, j) => {
-      plugin[j] = mt;
+// Create realistic PluginArray and MimeTypeArray with proper prototype chaining
+function buildPluginsAndMimes() {
+  const pluginProto      = (typeof Plugin !== 'undefined') ? Plugin.prototype : Object.prototype;
+  const pluginArrayProto = (typeof PluginArray !== 'undefined') ? PluginArray.prototype : Object.prototype;
+  const mimeProto        = (typeof MimeType !== 'undefined') ? MimeType.prototype : Object.prototype;
+  const mimeArrayProto   = (typeof MimeTypeArray !== 'undefined') ? MimeTypeArray.prototype : Object.prototype;
+
+  const plugins = Object.create(pluginArrayProto);
+  const mimeTypes = Object.create(mimeArrayProto);
+  const allMimes = [];
+
+  fakePlugins.forEach((pData, pIdx) => {
+    const plugin = Object.create(pluginProto);
+    plugin.name = pData.name;
+    plugin.filename = pData.filename;
+    plugin.description = pData.description;
+    plugin.length = pData.mimeTypes.length;
+
+    pData.mimeTypes.forEach((mData, mIdx) => {
+      const mime = Object.create(mimeProto);
+      mime.type = mData.type;
+      mime.suffixes = mData.suffixes;
+      mime.description = mData.description;
+      mime.enabledPlugin = plugin;
+
+      plugin[mIdx] = mime;
+      allMimes.push(mime);
+      if (!mimeTypes[mData.type]) {
+        mimeTypes[mData.type] = mime;
+      }
     });
-    arr.push(plugin);
-    arr[p.name] = plugin;
+
+    plugin.item = function(index) { return this[index] || null; };
+    plugin.namedItem = function(name) {
+      for (let i = 0; i < this.length; i++) {
+        if (this[i] && this[i].type === name) return this[i];
+      }
+      return null;
+    };
+
+    plugins[pIdx] = plugin;
+    plugins[pData.name] = plugin;
   });
-  arr.length = plugins.length;
-  arr.item = (i) => arr[i];
-  arr.namedItem = (name) => arr[name];
-  arr.refresh = () => {};
-  return arr;
+
+  Object.defineProperty(plugins, 'length', {
+    value: fakePlugins.length,
+    writable: false,
+    enumerable: false,
+    configurable: true,
+  });
+
+  plugins.item = function(index) { return this[index] || null; };
+  plugins.namedItem = function(name) { return this[name] || null; };
+  plugins.refresh = function() {};
+
+  allMimes.forEach((m, idx) => {
+    mimeTypes[idx] = m;
+  });
+
+  Object.defineProperty(mimeTypes, 'length', {
+    value: allMimes.length,
+    writable: false,
+    enumerable: false,
+    configurable: true,
+  });
+
+  mimeTypes.item = function(index) { return this[index] || null; };
+  mimeTypes.namedItem = function(name) { return this[name] || null; };
+
+  return { plugins, mimeTypes };
 }
 
 try {
+  const { plugins, mimeTypes } = buildPluginsAndMimes();
+
   Object.defineProperty(navigator, 'plugins', {
-    get: () => makeFakePluginArray(fakePlugins),
+    get: () => plugins,
     configurable: true,
   });
 
   Object.defineProperty(navigator, 'mimeTypes', {
-    get: () => {
-      const mimes = {};
-      fakePlugins.forEach(p => p.mimeTypes.forEach(mt => { mimes[mt.type] = mt; }));
-      return mimes;
-    },
+    get: () => mimeTypes,
     configurable: true,
   });
 } catch (e) { /* already defined */ }
+

@@ -16,9 +16,16 @@
  * Run with Chrome: node e2e_test.js --chrome "C:\chrome.exe"
  */
 
+const fs                      = require('fs');
+const path                    = require('path');
+const os                      = require('os');
+const http                    = require('http');
+const { spawn }               = require('child_process');
+
 const { testProxy }           = require('./src/profile/iptest');
 const { generateFingerprint } = require('./src/profile/generator');
 const StealthLoader           = require('./src/stealth/StealthLoader');
+
 
 const BOLD   = '\x1b[1m';
 const RESET  = '\x1b[0m';
@@ -222,8 +229,9 @@ async function step3_stealthLoader(fp) {
 
         // Check key injection patterns
         const checks = [
-            ['navigator.webdriver override',       "defNative(navigator, 'webdriver'"],
+            ['navigator.webdriver override',       'navigator.webdriver'],
             ['navigator.platform override',        'navigator.platform'],
+
             ['canvas noise',                       'getImageData'],
             ['WebGL spoofing',                     'UNMASKED_VENDOR_WEBGL'],
             ['AudioContext noise',                 'AudioContext.prototype'],
@@ -444,6 +452,156 @@ async function step6_ipcTest() {
     }
 }
 
+// ─── STEP 7: Live Chrome Test (bot.sannysoft.com) ─────────────────────────────
+async function step7_liveChromeTest(fp) {
+    header('STEP 7 — Live Chrome Test (bot.sannysoft.com)');
+
+    // Resolve Chrome executable path
+    let chromePath = chromeArg;
+    if (!chromePath) {
+        const defaultPaths = [
+            'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+            'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+            path.join(process.env.LOCALAPPDATA || '', 'Google\\Chrome\\Application\\chrome.exe'),
+        ];
+        chromePath = defaultPaths.find(p => fs.existsSync(p));
+    }
+
+    if (!chromePath || !fs.existsSync(chromePath)) {
+        warn(`Chrome executable not found (${chromePath || 'none'}). Pass --chrome "path/to/chrome.exe" to run live test.`);
+        return;
+    }
+
+    info(`Chrome binary: ${chromePath}`);
+
+    const debugPort = 9555;
+    const tmpDir = path.join(os.tmpdir(), `fwys_live_${Date.now()}`);
+    fs.mkdirSync(tmpDir, { recursive: true });
+
+    const chromeArgs = [
+        `--remote-debugging-port=${debugPort}`,
+        `--user-data-dir=${tmpDir}`,
+        '--no-first-run',
+        '--no-default-browser-check',
+        '--disable-blink-features=AutomationControlled',
+        '--force-webrtc-ip-handling-policy=disable_non_proxied_udp',
+        '--disable-background-networking',
+        '--no-pings',
+        '--disable-sync',
+        '--disable-default-apps',
+        '--metrics-recording-only',
+        '--disable-client-side-phishing-detection',
+        '--password-store=basic',
+        '--use-mock-keychain',
+        '--disable-breakpad',
+        `--window-size=${fp.screen?.width || 1280},${fp.screen?.height || 720}`,
+        '--headless=new',
+    ];
+
+    info(`Spawning Chrome on debug port ${debugPort}...`);
+    const cp = spawn(chromePath, chromeArgs, { stdio: 'ignore' });
+
+    let browser = null;
+    try {
+        // Wait for debug port
+        await new Promise((resolve, reject) => {
+            const start = Date.now();
+            const interval = setInterval(() => {
+                const req = http.get(`http://127.0.0.1:${debugPort}/json/version`, () => {
+                    clearInterval(interval);
+                    resolve();
+                });
+                req.on('error', () => {
+                    if (Date.now() - start > 12000) {
+                        clearInterval(interval);
+                        reject(new Error('Chrome launch timeout'));
+                    }
+                });
+                req.setTimeout(1000, () => req.destroy());
+            }, 300);
+        });
+
+        ok('Chrome instance launched with anti-detection flags');
+
+        // Connect puppeteer
+        const puppeteer = require('puppeteer-core');
+        browser = await puppeteer.connect({
+            browserURL: `http://127.0.0.1:${debugPort}`,
+            defaultViewport: null,
+        });
+        ok('CDP attached to Chrome instance');
+
+        const pages = await browser.pages();
+        const page = pages[0] || await browser.newPage();
+
+        // Inject stealth script
+        const stealthScript = StealthLoader.buildScript(fp);
+        await page.setUserAgent(fp.navigator.userAgent);
+        await page.evaluateOnNewDocument(stealthScript);
+        ok('Stealth scripts injected via CDP evaluateOnNewDocument');
+
+        info('Navigating to https://bot.sannysoft.com...');
+        const t0 = Date.now();
+        await page.goto('https://bot.sannysoft.com', { waitUntil: 'networkidle2', timeout: 35000 });
+        const loadTime = Date.now() - t0;
+        ok(`Page loaded in ${loadTime}ms`);
+
+        // Wait a little for any async tests to complete
+        await new Promise(r => setTimeout(r, 2000));
+
+        // Evaluate all test results
+        const testResults = await page.evaluate(() => {
+            const rows = document.querySelectorAll('table tr');
+            const data = [];
+            rows.forEach(r => {
+                const cols = r.querySelectorAll('td, th');
+                if (cols.length >= 2) {
+                    const name = cols[0].innerText.trim().replace(/\s+/g, ' ');
+                    const val  = cols[1].innerText.trim().replace(/\s+/g, ' ');
+                    if (name && name !== 'Test Name') {
+                        data.push({
+                            name,
+                            val,
+                            failed: cols[1].classList.contains('failed') || cols[1].style.backgroundColor === 'red',
+                            passed: cols[1].classList.contains('passed')
+                        });
+                    }
+                }
+            });
+            return data;
+        });
+
+        const failedList = testResults.filter(t => t.failed);
+        const passedList = testResults.filter(t => !t.failed);
+
+        console.log(`\n  ${BOLD}bot.sannysoft.com Live Detection Audit:${RESET}`);
+        for (const t of testResults) {
+            if (t.failed) {
+                fail(`sannysoft: ${t.name}`, t.val);
+            } else {
+                ok(`sannysoft: ${t.name}`, t.val);
+            }
+        }
+
+        const sannyScore = Math.round((passedList.length / testResults.length) * 100);
+        console.log(`\n  ${BOLD}Live Browser Stealth Score: ${sannyScore}% (${passedList.length}/${testResults.length} passed)${RESET}`);
+
+        // Save screenshot
+        const screenshotPath = path.resolve(__dirname, '..', 'e2e_sannysoft_result.png');
+        await page.screenshot({ path: screenshotPath, fullPage: true });
+        ok('Live screenshot captured', screenshotPath);
+
+    } catch (err) {
+        fail('Live Chrome test failed', err.message);
+    } finally {
+        if (browser) {
+            try { await browser.disconnect(); } catch {}
+        }
+        try { cp.kill(); } catch {}
+        try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+    }
+}
+
 // ─── MAIN ─────────────────────────────────────────────────────────────────────
 async function main() {
     console.log('');
@@ -453,15 +611,17 @@ async function main() {
     console.log('');
     info(`Profile ID: ${profileId}`);
     info(`Proxy: ${proxyArg || 'none (real IP test)'}`);
-    info(`Chrome: ${chromeArg || 'not specified (skip live test)'}`);
+    info(`Chrome: ${chromeArg || 'auto-detect'}`);
     console.log('');
 
     const ipData = await step1_proxyTest();
     const fp     = await step2_generateFP(ipData);
-               await step3_stealthLoader(fp);
-               await step4_consistency(fp);
-               await step5_detectionSim(fp);
-               await step6_ipcTest();
+                 await step3_stealthLoader(fp);
+                 await step4_consistency(fp);
+                 await step5_detectionSim(fp);
+                 await step6_ipcTest();
+                 await step7_liveChromeTest(fp);
+
 
     // ── Final summary ─────────────────────────────────────────────────────────
     const total = passed + failed;

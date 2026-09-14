@@ -23,9 +23,15 @@ function defNative(obj, prop, get, set_) {
 
 // ─────────────────────────────────────────────────────────────────────────
 // P0 — navigator.webdriver (MOST CRITICAL)
-// Must ALWAYS be false — primary detection signal for all bot detectors
+// Must be missing from own properties and not true on prototype
 // ─────────────────────────────────────────────────────────────────────────
-defNative(navigator, 'webdriver', () => false);
+try {
+  delete Object.getPrototypeOf(navigator).webdriver;
+} catch (e) {}
+try {
+  delete navigator.webdriver;
+} catch (e) {}
+
 
 // ── navigator.platform ───────────────────────────────────────────────────
 if (nav.platform) defNative(navigator, 'platform', () => nav.platform);
@@ -60,11 +66,13 @@ defNative(navigator, 'doNotTrack', () => null);
 // ── navigator.pdfViewerEnabled ───────────────────────────────────────────
 defNative(navigator, 'pdfViewerEnabled', () => true);
 
-// ── navigator.appVersion ─────────────────────────────────────────────────
+// ── navigator.userAgent + appVersion ─────────────────────────────────────
 if (nav.userAgent) {
+  defNative(navigator, 'userAgent', () => nav.userAgent);
   defNative(navigator, 'appVersion',
-    () => nav.userAgent.replace('Mozilla/', ''));
+    () => nav.userAgent.replace(/^Mozilla\//, ''));
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────
 // P1 — navigator.userAgentData (Client Hints JS API)

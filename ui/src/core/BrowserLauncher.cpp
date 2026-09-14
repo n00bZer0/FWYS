@@ -66,19 +66,34 @@ QStringList BrowserLauncher::buildChromiumArgs(const QJsonObject& profile, int d
 {
     const QString profileId = profile["id"].toString();
 
-    // Read fingerprint data
-    QString fpStr = profile["fingerprint_data"].toString("{}");
-    QJsonObject fp = QJsonDocument::fromJson(fpStr.toUtf8()).object();
+    // Read fingerprint data (can be QJsonObject or serialized JSON string)
+    QJsonObject fp;
+    if (profile["fingerprint_data"].isObject()) {
+        fp = profile["fingerprint_data"].toObject();
+    } else {
+        QString fpStr = profile["fingerprint_data"].toString("{}");
+        fp = QJsonDocument::fromJson(fpStr.toUtf8()).object();
+    }
 
-    // Fallback to profile-level fields if not in fp
+    // Helper for nested or flat keys (e.g. "navigator.userAgent" or fp["navigator"]["userAgent"])
+    auto fpVal_ = [&](const QString& key) -> QJsonValue {
+        if (fp.contains(key)) return fp[key];
+        QStringList parts = key.split('.');
+        if (parts.size() == 2 && fp.contains(parts[0]) && fp[parts[0]].isObject()) {
+            QJsonObject sub = fp[parts[0]].toObject();
+            if (sub.contains(parts[1])) return sub[parts[1]];
+        }
+        return QJsonValue();
+    };
     auto fpStr_ = [&](const QString& key, const QString& def) -> QString {
-        if (fp.contains(key)) return fp[key].toString(def);
-        return def;
+        QJsonValue v = fpVal_(key);
+        return (v.isString() && !v.toString().isEmpty()) ? v.toString() : def;
     };
     auto fpInt_ = [&](const QString& key, int def) -> int {
-        if (fp.contains(key)) return fp[key].toInt(def);
-        return def;
+        QJsonValue v = fpVal_(key);
+        return v.isDouble() ? v.toInt() : def;
     };
+
 
     // Navigator fields
     QString osType      = profile["os_type"].toString("windows10");
@@ -271,10 +286,16 @@ bool BrowserLauncher::launchProfile(const QString& profileId)
     ipcPayload["profileId"]    = profileId;
     ipcPayload["chromiumPath"] = m_chromiumPath;
     ipcPayload["debugPort"]    = debugPort;
-    ipcPayload["fingerprint"]  = profile.contains("fingerprint_data")
-        ? QJsonDocument::fromJson(profile["fingerprint_data"].toString("{}").toUtf8()).object()
-        : QJsonObject();
+    QJsonObject fpPayload;
+
+    if (profile["fingerprint_data"].isObject()) {
+        fpPayload = profile["fingerprint_data"].toObject();
+    } else if (profile.contains("fingerprint_data")) {
+        fpPayload = QJsonDocument::fromJson(profile["fingerprint_data"].toString("{}").toUtf8()).object();
+    }
+    ipcPayload["fingerprint"] = fpPayload;
     sendIPCCommand("attach_cdp", ipcPayload);
+
 
     qDebug() << "[Launcher] Launched profile:" << profileId << "port:" << debugPort;
     return true;
