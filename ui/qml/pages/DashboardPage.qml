@@ -142,7 +142,7 @@ Item {
                     MouseArea {
                         id: newBtnMa; anchors.fill: parent
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: newProfileDialog.open()
+                        onClicked: dashboard.editProfile("")
                     }
                 }
             }
@@ -295,7 +295,7 @@ Item {
                             MouseArea {
                                 id: emptyNewBtnMa; anchors.fill: parent
                                 cursorShape: Qt.PointingHandCursor
-                                onClicked: newProfileDialog.open()
+                                onClicked: dashboard.editProfile("")
                             }
                         }
 
