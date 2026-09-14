@@ -21,13 +21,16 @@ const SCRIPT_ORDER = [
   'plugins.js',             // P0: plugins + mimeTypes
   'permissions.js',         // P0: permissions API
   'canvas.js',              // P1: canvas noise (toDataURL + getImageData + toBlob)
+  'audio.js',               // P1: AudioContext.prototype + AudioBuffer + AnalyserNode noise
   'webgl.js',               // P1: WebGL UNMASKED vendor/renderer
+  'fonts.js',               // P1: measureText noise + document.fonts.check()
   'webrtc.js',              // P0: WebRTC IP leak block
   'battery.js',             // P2: getBattery()
   'speech.js',              // P2: speechSynthesis.getVoices()
   'network_info.js',        // P3: navigator.connection
   'performance_timing.js',  // P3: performance.now() jitter
 ];
+
 
 class StealthLoader {
   /**

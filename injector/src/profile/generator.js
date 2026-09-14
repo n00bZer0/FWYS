@@ -313,6 +313,7 @@ function generateFingerprint(options = {}) {
             renderer: gpuProfile.renderer,
         },
         canvas: {
+            seed:       parseInt(seed.replace(/[^0-9]/g, '').slice(0, 9)) || 12345678,
             noiseLevel,     // 1=subtle 2=normal 3=strong
             noiseType: 'pixel',
         },
@@ -355,12 +356,18 @@ function generateFingerprint(options = {}) {
             ],
         },
         audio: {
+            seed:               parseInt(seed.replace(/[^0-9]/g, '').slice(1, 10)) || 87654321,
             sampleRate:         44100,
             channelCount:       2,
             maxChannelCount:    2,
             noiseLevel,
             baseLatency:        0.005,
             outputLatency:      0.012,
+        },
+        audioContext: {
+            seed:               parseInt(seed.replace(/[^0-9]/g, '').slice(1, 10)) || 87654321,
+            sampleRate:         44100,
+            noiseLevel,
         },
         fonts: {
             list:   fontList,
@@ -393,8 +400,17 @@ function generateFingerprint(options = {}) {
             dischargingTime: Math.floor(3600 + pseudoRandom(seed + 'dis', 7200)),
             level:           batteryLevel,
         },
-        plugins: [],        // Empty — Chrome no longer exposes plugins
-        mimeTypes: [],
+        plugins: [
+            { name: 'PDF Viewer',                    filename: 'internal-pdf-viewer',     description: 'Portable Document Format' },
+            { name: 'Chrome PDF Viewer',             filename: 'internal-pdf-viewer',     description: '' },
+            { name: 'Chromium PDF Viewer',           filename: 'internal-pdf-viewer',     description: '' },
+            { name: 'Microsoft Edge PDF Viewer',     filename: 'internal-pdf-viewer',     description: '' },
+            { name: 'WebKit built-in PDF',           filename: 'internal-pdf-viewer',     description: '' },
+        ],
+        mimeTypes: [
+            { type: 'application/pdf',       description: 'Portable Document Format', suffixes: 'pdf' },
+            { type: 'text/pdf',              description: '',                          suffixes: 'pdf' },
+        ],
         chrome: {
             // window.chrome object must exist and look real
             loadTimes: {},
@@ -443,6 +459,13 @@ function generateFingerprint(options = {}) {
             ipSource:        ipData.ip || '',
         },
     };
+
+    // ── Flat aliases for easy access ─────────────────────────────────────────
+    // These duplicate nested values at the top level for QML / test convenience
+    fp.language            = fp.navigator.language;
+    fp.languages           = fp.navigator.languages;
+    fp.hardwareConcurrency = fp.navigator.hardwareConcurrency;
+    fp.deviceMemory        = fp.navigator.deviceMemory;
 
     return fp;
 }
