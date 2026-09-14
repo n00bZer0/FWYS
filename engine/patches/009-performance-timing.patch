@@ -1,0 +1,106 @@
+--- a/third_party/blink/renderer/core/timing/performance.cc
++++ b/third_party/blink/renderer/core/timing/performance.cc
+@@ -1,5 +1,8 @@
+ // Copyright 2010 The Chromium Authors
+ // Use of this source code is governed by BSD-style license.
++//
++// FWYS Patch 009 (NEW): performance.now() timing attack prevention
++// Rounds to 0.1ms granularity + adds seeded micro-jitter
++// Defeats: CPU speed fingerprinting, timing side-channels, clock skew detection
+
+ #include "third_party/blink/renderer/core/timing/performance.h"
++#include "base/command_line.h"
++#include "base/strings/string_number_conversions.h"
+
++// ─── FWYS Timing namespace ────────────────────────────────────────────────────
++namespace fwys_timing {
++
++  static uint64_t timing_seed = 0;
++  static bool initialized     = false;
++  static uint32_t call_index  = 0;  // monotonic call counter for seeded jitter
++
++  void EnsureInit() {
++    if (initialized) return;
++    initialized = true;
++    auto* cmd = base::CommandLine::ForCurrentProcess();
++    // Re-use canvas seed as timing seed basis (derived, not same)
++    if (cmd->HasSwitch("fwys-canvas-seed")) {
++      uint64_t canvas_seed = 0;
++      base::StringToUint64(cmd->GetSwitchValueASCII("fwys-canvas-seed"), &canvas_seed);
++      // XOR with timing-specific constant to get different seed
++      timing_seed = canvas_seed ^ 0x9e3779b97f4a7c15ULL;
++    }
++  }
++
++  bool IsEnabled() { EnsureInit(); return timing_seed != 0; }
++
++  // Seeded jitter: deterministic per call index but varies per profile
++  // Returns [-0.05, +0.05] milliseconds
++  double Jitter() {
++    if (!IsEnabled()) return 0.0;
++    uint32_t idx = ++call_index;
++    uint64_t h   = timing_seed ^ ((uint64_t)idx * 6364136223846793005ULL);
++    h ^= h >> 33; h *= 0xff51afd7ed558ccdULL; h ^= h >> 33;
++    // Map to [-0.05, +0.05] ms
++    return ((double)(h & 0xFFFF) / (double)0xFFFF - 0.5) * 0.10;
++  }
++
++  // Apply quantization + jitter to a raw timestamp (milliseconds)
++  DOMHighResTimeStamp Obscure(DOMHighResTimeStamp raw) {
++    if (!IsEnabled()) return raw;
++    // Step 1: Round to nearest 0.1ms (matches Chrome's reduced timer precision)
++    double rounded = std::round(raw * 10.0) / 10.0;
++    // Step 2: Add tiny seeded jitter
++    return rounded + Jitter();
++  }
++
++} // namespace fwys_timing
+
+ namespace blink {
+
+ DOMHighResTimeStamp Performance::now() const {
+   // Chromium's internal implementation
+   double now_ms = TimeOrigin() +
+       (base::TimeTicks::Now() - time_origin_).InMillisecondsF();
+-  return ClampTimeResolution(now_ms, cross_origin_isolated_capability_);
++
++  // FWYS: Apply quantization + jitter after Chromium's own clamping
++  DOMHighResTimeStamp clamped = ClampTimeResolution(
++      now_ms, cross_origin_isolated_capability_);
++  return fwys_timing::Obscure(clamped);
+ }
+
+--- a/third_party/blink/renderer/core/timing/performance.cc
++++ b/third_party/blink/renderer/core/timing/performance.cc
+@@ -300,8 +310,14 @@ DOMHighResTimeStamp Performance::timeOrigin() const {
+   // Returns the time origin (navigation start time)
+-  return time_origin_.InMillisecondsF();
++  // FWYS: Also obscure timeOrigin to prevent correlation attacks
++  // (different profiles get different apparent time origins)
++  double real = time_origin_.InMillisecondsF();
++  if (fwys_timing::IsEnabled()) {
++    // Add a fixed offset derived from seed (same for this profile, always)
++    uint64_t h = fwys_timing::timing_seed ^ 0xabcdef1234567890ULL;
++    h ^= h >> 33; h *= 0xff51afd7ed558ccdULL; h ^= h >> 33;
++    double offset = ((double)(h & 0xFFF) / (double)0xFFF - 0.5) * 100.0; // ±50ms
++    return real + offset;
++  }
++  return real;
+ }
+
+--- a/third_party/blink/renderer/core/timing/dom_window_performance.cc
++++ b/third_party/blink/renderer/core/timing/dom_window_performance.cc
+@@ -1,5 +1,6 @@
+ // Copyright 2012 The Chromium Authors
++// FWYS Patch 009b: window.performance.timing entries jitter
+
+@@ -85,10 +87,18 @@ PerformanceNavigationTiming*
+ DOMWindowPerformance::GetNavigationTiming() const {
+   // Returns navigation timing entries used by sites to fingerprint load behavior
+-  return navigation_timing_.Get();
++  // FWYS: Slightly jitter timing entries
++  // NOTE: We can't modify the raw timing object without rebuilding it.
++  // The JS layer (performance_timing.js) handles this for now.
++  // This stub is here for future C++-level implementation.
++  return navigation_timing_.Get();
+ }

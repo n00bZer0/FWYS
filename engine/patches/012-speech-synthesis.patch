@@ -1,0 +1,146 @@
+--- a/third_party/blink/renderer/modules/speech/speech_synthesis.cc
++++ b/third_party/blink/renderer/modules/speech/speech_synthesis.cc
+@@ -1,5 +1,8 @@
+ // Copyright 2013 The Chromium Authors
+ // Use of this source code is governed by BSD-style license.
++//
++// FWYS Patch 012 (NEW): Speech synthesis voice list spoofing
++// speechSynthesis.getVoices() — OS-specific voice list from profile
++// Windows 10/11/Linux voice lists are distinct fingerprints
+
+ #include "third_party/blink/renderer/modules/speech/speech_synthesis.h"
++#include "base/command_line.h"
++#include "base/json/json_reader.h"
+
++// ─── FWYS Speech namespace ────────────────────────────────────────────────────
++namespace fwys_speech {
++
++  struct VoiceEntry {
++    std::string name;
++    std::string lang;
++    bool local_service = true;
++    bool is_default    = false;
++  };
++
++  static std::vector<VoiceEntry> voices;
++  static bool initialized = false;
++
++  // Default voice lists per OS (matches real Chrome installations)
++  static const std::vector<VoiceEntry> kWindows10Voices = {
++    {"Microsoft David - English (United States)",  "en-US", true, true},
++    {"Microsoft Zira - English (United States)",   "en-US", true, false},
++    {"Microsoft Mark - English (United States)",   "en-US", true, false},
++    {"Microsoft David Desktop - English (United States)", "en-US", false, false},
++  };
++  static const std::vector<VoiceEntry> kWindows11Voices = {
++    {"Microsoft Aria Online (Natural) - English (United States)",  "en-US", false, true},
++    {"Microsoft Jenny Online (Natural) - English (United States)", "en-US", false, false},
++    {"Microsoft Guy Online (Natural) - English (United States)",   "en-US", false, false},
++    {"Microsoft David - English (United States)",  "en-US", true,  false},
++    {"Microsoft Zira - English (United States)",   "en-US", true,  false},
++    {"Microsoft Mark - English (United States)",   "en-US", true,  false},
++  };
++  static const std::vector<VoiceEntry> kLinuxVoices = {};  // Linux Chrome: empty
++  static const std::vector<VoiceEntry> kMacVoices = {
++    {"Alex",   "en-US", true, true},
++    {"Samantha","en-US", true, false},
++    {"Victoria","en-US", true, false},
++    {"Daniel", "en-GB", true, false},
++    {"Karen",  "en-AU", true, false},
++  };
++
++  void EnsureInit() {
++    if (initialized) return;
++    initialized = true;
++    auto* cmd = base::CommandLine::ForCurrentProcess();
++
++    if (cmd->HasSwitch("fwys-speech-voices-json")) {
++      // Custom voice list from profile: '[{"name":"...","lang":"..."}]'
++      auto val = base::JSONReader::Read(
++          cmd->GetSwitchValueASCII("fwys-speech-voices-json"));
++      if (val && val->is_list()) {
++        for (const auto& item : val->GetList()) {
++          if (!item.is_dict()) continue;
++          VoiceEntry e;
++          if (auto* n = item.GetDict().FindString("name")) e.name = *n;
++          if (auto* l = item.GetDict().FindString("lang")) e.lang = *l;
++          if (auto* ls = item.GetDict().FindBool("localService"))
++            e.local_service = *ls;
++          if (auto* d = item.GetDict().FindBool("default"))
++            e.is_default = *d;
++          if (!e.name.empty()) voices.push_back(e);
++        }
++        return;
++      }
++    }
++
++    // Fall back to OS-based voice list
++    std::string os = "windows10";
++    if (cmd->HasSwitch("fwys-platform"))
++      os = base::ToLowerASCII(cmd->GetSwitchValueASCII("fwys-platform"));
++
++    if (os.find("win") != std::string::npos) {
++      // Check for Win11 (platform version >= 10.0.22000)
++      std::string pv;
++      if (cmd->HasSwitch("fwys-ua-platform-version"))
++        pv = cmd->GetSwitchValueASCII("fwys-ua-platform-version");
++      // Win11 build >= 22000
++      if (!pv.empty() && pv >= "10.0.22") {
++        voices = kWindows11Voices;
++      } else {
++        voices = kWindows10Voices;
++      }
++    } else if (os.find("linux") != std::string::npos) {
++      voices = kLinuxVoices;
++    } else if (os.find("mac") != std::string::npos) {
++      voices = kMacVoices;
++    } else {
++      voices = kWindows10Voices;  // safe default
++    }
++  }
++
++  bool IsEnabled() { EnsureInit(); return true; }
++  const std::vector<VoiceEntry>& GetVoices() { return voices; }
++
++} // namespace fwys_speech
+
+ namespace blink {
+
+ SpeechSynthesisVoiceList* SpeechSynthesis::getVoices() {
++  // FWYS: Return spoofed voice list from profile
++  fwys_speech::EnsureInit();
++
++  auto* list = MakeGarbageCollected<SpeechSynthesisVoiceList>();
++
++  for (const auto& v : fwys_speech::GetVoices()) {
++    auto* voice = MakeGarbageCollected<SpeechSynthesisVoice>();
++    voice->SetName(String::FromUTF8(v.name));
++    voice->SetLang(String::FromUTF8(v.lang));
++    // voiceURI = same as name (matches Chrome behavior)
++    voice->SetVoiceURI(String::FromUTF8(v.name));
++    voice->SetLocalService(v.local_service);
++    voice->SetDefault(v.is_default);
++    list->Append(voice);
++  }
++
++  return list;
++
+-  // Original: fetches from browser process via Mojo TTS interface
+-  return voices_.Get();
+ }
+
+@@ -180,10 +230,20 @@ void SpeechSynthesis::VoicesDidChange() {
+   // Called when OS voices change — suppress to prevent fingerprint leak
++  if (fwys_speech::IsEnabled()) {
++    // Fire the voiceschanged event once with our fake list
++    // (sites listen for this to call getVoices())
++    // Only fire once, not on real OS voice changes
++    static bool fired = false;
++    if (!fired) {
++      fired = true;
++      DispatchEvent(*Event::Create(event_type_names::kVoiceschanged));
++    }
++    return;  // Suppress subsequent calls
++  }
+   // ... original voiceschanged dispatch ...
+ }

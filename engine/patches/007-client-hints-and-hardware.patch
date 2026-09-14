@@ -1,68 +1,241 @@
---- a/components/embedder_support/user_agent_utils.cc
-+++ b/components/embedder_support/user_agent_utils.cc
-@@ -1,5 +1,7 @@
- // Copyright 2021 The Chromium Authors
+--- a/third_party/blink/renderer/core/frame/navigator_ua_data.cc
++++ b/third_party/blink/renderer/core/frame/navigator_ua_data.cc
+@@ -1,5 +1,8 @@
+ // Copyright 2020 The Chromium Authors
  // Use of this source code is governed by BSD-style license.
 +//
-+// FWYS Patch 007: User-Agent Client Hints customization
-+// Allows --fwys-ua-brand, --fwys-ua-version, --fwys-ua-platform overrides
++// FWYS Patch 007 (v2 REWRITE): Complete Client Hints JS API spoofing
++// Patches: NavigatorUAData.brands, .mobile, .platform, .getHighEntropyValues()
++// getHighEntropyValues() is ASYNC — must patch the Promise resolution path
 
+ #include "third_party/blink/renderer/core/frame/navigator_ua_data.h"
 +#include "base/command_line.h"
++#include "base/json/json_reader.h"
++#include "base/strings/string_number_conversions.h"
 
-+namespace fwys_ua {
-+  static std::string brand;
-+  static std::string version;
++// ─── FWYS Client Hints namespace ──────────────────────────────────────────────
++namespace fwys_ua_data {
++
++  struct BrandEntry { std::string brand; std::string version; };
++
++  static std::vector<BrandEntry> brands;
 +  static std::string platform;
++  static std::string platform_version;
++  static std::string architecture;
++  static std::string bitness;
++  static std::string model;
++  static std::string full_version;
++  static bool mobile    = false;
++  static bool wow64     = false;
 +  static bool initialized = false;
 +
 +  void EnsureInit() {
-+    if (initialized) return; initialized = true;
++    if (initialized) return;
++    initialized = true;
 +    auto* cmd = base::CommandLine::ForCurrentProcess();
-+    if (cmd->HasSwitch("fwys-ua-brand"))
-+      brand = cmd->GetSwitchValueASCII("fwys-ua-brand");
-+    if (cmd->HasSwitch("fwys-ua-version"))
-+      version = cmd->GetSwitchValueASCII("fwys-ua-version");
++
++    // --fwys-ua-brands='[{"brand":"Google Chrome","version":"131"},...]'
++    if (cmd->HasSwitch("fwys-ua-brands")) {
++      auto val = base::JSONReader::Read(cmd->GetSwitchValueASCII("fwys-ua-brands"));
++      if (val && val->is_list()) {
++        for (const auto& item : val->GetList()) {
++          if (item.is_dict()) {
++            const auto* b = item.GetDict().FindString("brand");
++            const auto* v = item.GetDict().FindString("version");
++            if (b && v) brands.push_back({*b, *v});
++          }
++        }
++      }
++    }
++
++    // Fall back to sensible defaults if no brands specified
++    if (brands.empty()) {
++      brands.push_back({"Not?A_Brand",    "99"});
++      brands.push_back({"Chromium",       "131"});
++      brands.push_back({"Google Chrome",  "131"});
++    }
++
 +    if (cmd->HasSwitch("fwys-ua-platform"))
 +      platform = cmd->GetSwitchValueASCII("fwys-ua-platform");
-+  }
-+} // namespace fwys_ua
++    if (platform.empty()) platform = "Windows";
++
++    if (cmd->HasSwitch("fwys-ua-platform-version"))
++      platform_version = cmd->GetSwitchValueASCII("fwys-ua-platform-version");
++    if (platform_version.empty()) platform_version = "10.0.0";
++
++    if (cmd->HasSwitch("fwys-ua-arch"))
++      architecture = cmd->GetSwitchValueASCII("fwys-ua-arch");
++    if (architecture.empty()) architecture = "x86";
++
++    if (cmd->HasSwitch("fwys-ua-bitness"))
++      bitness = cmd->GetSwitchValueASCII("fwys-ua-bitness");
++    if (bitness.empty()) bitness = "64";
 
- std::string GetUserAgent() {
-+  fwys_ua::EnsureInit();
-   // ... existing UA string building ...
++    if (cmd->HasSwitch("fwys-ua-full-version"))
++      full_version = cmd->GetSwitchValueASCII("fwys-ua-full-version");
++    if (full_version.empty()) full_version = "131.0.0.0";
++
++    mobile = cmd->HasSwitch("fwys-ua-mobile");
++    wow64  = cmd->HasSwitch("fwys-ua-wow64");
++  }
++
++  bool IsEnabled() { EnsureInit(); return true; }
++
++} // namespace fwys_ua_data
+
+ namespace blink {
+
+@@ -50,12 +100,22 @@ NavigatorUAData::NavigatorUAData(ExecutionContext* context)
+     : ExecutionContext::Context(context) {}
+
+ const HeapVector<Member<UADataValues>>& NavigatorUAData::brands() const {
++  // FWYS: Return spoofed brands list
++  fwys_ua_data::EnsureInit();
++  if (!brands_override_.IsNull()) return brands_override_;
++
++  // Build override from fwys_ua_data::brands
++  brands_override_ = HeapVector<Member<UADataValues>>();
++  for (const auto& b : fwys_ua_data::brands) {
++    auto* entry = MakeGarbageCollected<UADataValues>();
++    entry->setBrand(String::FromUTF8(b.brand));
++    entry->setVersion(String::FromUTF8(b.version));
++    brands_override_.push_back(entry);
++  }
++  return brands_override_;
+-  return brands_;
  }
 
- blink::UserAgentMetadata GetUserAgentMetadata() {
-+  fwys_ua::EnsureInit();
-   blink::UserAgentMetadata metadata;
-+  if (!fwys_ua::brand.empty())
-+    metadata.brand_version_list.push_back({fwys_ua::brand, fwys_ua::version});
-+  if (!fwys_ua::platform.empty())
-+    metadata.platform = fwys_ua::platform;
-   // ... rest of existing code ...
+ bool NavigatorUAData::mobile() const {
+-  return is_mobile_;
++  fwys_ua_data::EnsureInit();
++  return fwys_ua_data::mobile;
  }
 
---- a/third_party/blink/renderer/core/frame/navigator.cc
-+++ b/third_party/blink/renderer/core/frame/navigator.cc
-@@ -100,8 +100,17 @@ unsigned Navigator::hardwareConcurrency() const {
--  return base::SysInfo::NumberOfProcessors();
-+  // FWYS Patch 008: hardwareConcurrency override
-+  const base::CommandLine* cmd = base::CommandLine::ForCurrentProcess();
-+  if (cmd->HasSwitch("fwys-hw-concurrency")) {
-+    int v = 0;
-+    if (base::StringToInt(cmd->GetSwitchValueASCII("fwys-hw-concurrency"), &v) && v > 0)
-+      return (unsigned)v;
-+  }
-+  return base::SysInfo::NumberOfProcessors();
+ String NavigatorUAData::platform() const {
+-  return platform_;
++  fwys_ua_data::EnsureInit();
++  return String::FromUTF8(fwys_ua_data::platform);
  }
 
-@@ -115,8 +125,17 @@ double Navigator::deviceMemory() const {
--  return GetApproximatedDeviceMemory();
-+  // FWYS Patch 009: deviceMemory override
-+  if (cmd->HasSwitch("fwys-device-memory")) {
-+    double v = 0;
-+    if (base::StringToDouble(cmd->GetSwitchValueASCII("fwys-device-memory"), &v) && v > 0)
-+      return v;
+@@ -80,6 +130,55 @@ ScriptPromise<UADataValues> NavigatorUAData::getHighEntropyValues(
+     ScriptState* script_state,
+     const Vector<String>& hints,
+     ExceptionState& exception_state) {
++
++  // FWYS: Return spoofed high-entropy values
++  // This is the ASYNC path — must create Promise and resolve with our values
++  fwys_ua_data::EnsureInit();
++
++  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver<UADataValues>>(
++      script_state, exception_state.GetContext());
++  auto promise = resolver->Promise();
++
++  auto* ua_data_values = MakeGarbageCollected<UADataValues>();
++
++  for (const String& hint : hints) {
++    if (hint == "brands") {
++      // Return full brands list
++      HeapVector<Member<UADataValues>> brands_vec;
++      for (const auto& b : fwys_ua_data::brands) {
++        auto* e = MakeGarbageCollected<UADataValues>();
++        e->setBrand(String::FromUTF8(b.brand));
++        e->setVersion(String::FromUTF8(b.version));
++        brands_vec.push_back(e);
++      }
++      ua_data_values->setBrands(brands_vec);
++    } else if (hint == "fullVersionList") {
++      // Same as brands but with full version
++      HeapVector<Member<UADataValues>> fvl;
++      for (const auto& b : fwys_ua_data::brands) {
++        auto* e = MakeGarbageCollected<UADataValues>();
++        e->setBrand(String::FromUTF8(b.brand));
++        e->setVersion(String::FromUTF8(fwys_ua_data::full_version));
++        fvl.push_back(e);
++      }
++      ua_data_values->setFullVersionList(fvl);
++    } else if (hint == "uaFullVersion") {
++      ua_data_values->setUaFullVersion(
++          String::FromUTF8(fwys_ua_data::full_version));
++    } else if (hint == "platform") {
++      ua_data_values->setPlatform(String::FromUTF8(fwys_ua_data::platform));
++    } else if (hint == "platformVersion") {
++      ua_data_values->setPlatformVersion(
++          String::FromUTF8(fwys_ua_data::platform_version));
++    } else if (hint == "architecture") {
++      ua_data_values->setArchitecture(
++          String::FromUTF8(fwys_ua_data::architecture));
++    } else if (hint == "bitness") {
++      ua_data_values->setBitness(String::FromUTF8(fwys_ua_data::bitness));
++    } else if (hint == "model") {
++      ua_data_values->setModel(String::FromUTF8(fwys_ua_data::model));
++    } else if (hint == "mobile") {
++      ua_data_values->setMobile(fwys_ua_data::mobile);
++    } else if (hint == "wow64") {
++      ua_data_values->setWow64(fwys_ua_data::wow64);
++    }
 +  }
-+  return GetApproximatedDeviceMemory();
++
++  // Resolve promise with our fake values
++  resolver->Resolve(ua_data_values);
++  return promise;
+
+-  // ... original implementation fetches real system values ...
+ }
+
+--- a/services/network/public/cpp/client_hints.cc
++++ b/services/network/public/cpp/client_hints.cc
+@@ -1,5 +1,7 @@
+ // Copyright 2021 The Chromium Authors
++//
++// FWYS Patch 007b: Sec-CH-UA HTTP request headers spoofing
++// Patches the headers sent in HTTP requests (not just JS API)
+
+ #include "services/network/public/cpp/client_hints.h"
++#include "base/command_line.h"
+
+@@ -120,12 +122,35 @@ void AddClientHintsHeadersToPrefetchRequest(...) {
+   // ... existing code ...
+ }
+
++// FWYS: Override Sec-CH-UA headers in outgoing requests
++// Called whenever Chromium adds CH headers to a request
++void FwysOverrideClientHintHeaders(net::HttpRequestHeaders* headers) {
++  fwys_ua_data::EnsureInit();
++  if (!fwys_ua_data::IsEnabled()) return;
++
++  // Build Sec-CH-UA header value: "Not?A_Brand";v="99", "Chromium";v="131", ...
++  std::string sec_ch_ua;
++  for (size_t i = 0; i < fwys_ua_data::brands.size(); ++i) {
++    if (i > 0) sec_ch_ua += ", ";
++    sec_ch_ua += "\"" + fwys_ua_data::brands[i].brand + "\"";
++    sec_ch_ua += ";v=\"" + fwys_ua_data::brands[i].version + "\"";
++  }
++
++  headers->SetHeader("Sec-CH-UA",                  sec_ch_ua);
++  headers->SetHeader("Sec-CH-UA-Mobile",            fwys_ua_data::mobile ? "?1" : "?0");
++  headers->SetHeader("Sec-CH-UA-Platform",          "\"" + fwys_ua_data::platform + "\"");
++  headers->SetHeader("Sec-CH-UA-Platform-Version",  "\"" + fwys_ua_data::platform_version + "\"");
++  headers->SetHeader("Sec-CH-UA-Arch",              "\"" + fwys_ua_data::architecture + "\"");
++  headers->SetHeader("Sec-CH-UA-Bitness",           "\"" + fwys_ua_data::bitness + "\"");
++  headers->SetHeader("Sec-CH-UA-Wow64",             fwys_ua_data::wow64 ? "?1" : "?0");
++
++  // Full version list
++  std::string fvl;
++  for (size_t i = 0; i < fwys_ua_data::brands.size(); ++i) {
++    if (i > 0) fvl += ", ";
++    fvl += "\"" + fwys_ua_data::brands[i].brand + "\"";
++    fvl += ";v=\"" + fwys_ua_data::full_version + "\"";
++  }
++  headers->SetHeader("Sec-CH-UA-Full-Version-List", fvl);
++}
++
++// Hook this into the existing AddClientHintsHeaders function:
+ void AddClientHintsHeaders(
+     ClientHintsPreferences& client_hints_prefs,
+     net::HttpRequestHeaders* headers,
+     ...) {
+   // ... existing CH header logic ...
++
++  // FWYS: Override all CH headers with profile values (after existing code)
++  FwysOverrideClientHintHeaders(headers);
  }

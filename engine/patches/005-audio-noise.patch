@@ -1,47 +1,146 @@
---- a/third_party/blink/renderer/modules/webaudio/analyser_node.cc
-+++ b/third_party/blink/renderer/modules/webaudio/analyser_node.cc
-@@ -1,5 +1,7 @@
+--- a/third_party/blink/renderer/modules/webaudio/offline_audio_destination_node.cc
++++ b/third_party/blink/renderer/modules/webaudio/offline_audio_destination_node.cc
+@@ -1,5 +1,8 @@
  // Copyright 2011 The Chromium Authors
  // Use of this source code is governed by BSD-style license.
 +//
-+// FWYS Patch 005: AudioContext / AudioBuffer noise injection
-+// Applies seeded noise to audio analysis output
++// FWYS Patch 005 (v2 REWRITE): AudioContext fingerprint noise
++// PRIMARY target: OfflineAudioContext (used by ALL audio fingerprinters)
++// SECONDARY: RealtimeAnalyser getFloatFrequencyData / getByteFrequencyData
 
+ #include "third_party/blink/renderer/modules/webaudio/offline_audio_destination_node.h"
 +#include "base/command_line.h"
++#include "base/strings/string_number_conversions.h"
 
++// ─── FWYS Audio noise namespace ───────────────────────────────────────────────
++// Shared across: offline_audio_destination_node.cc, realtime_analyser.cc,
++//                audio_buffer.cc
 +namespace fwys_audio {
++
 +  static uint64_t audio_seed = 0;
-+  static bool initialized = false;
++  static bool initialized    = false;
 +
 +  void EnsureInit() {
 +    if (initialized) return;
 +    initialized = true;
 +    const base::CommandLine* cmd = base::CommandLine::ForCurrentProcess();
 +    if (cmd->HasSwitch("fwys-audio-seed")) {
-+      std::string s = cmd->GetSwitchValueASCII("fwys-audio-seed");
-+      base::StringToUint64(s, &audio_seed);
++      base::StringToUint64(cmd->GetSwitchValueASCII("fwys-audio-seed"), &audio_seed);
 +    }
 +  }
 +
-+  // Sub-LSB noise on float audio sample
-+  float NoiseSample(float sample, size_t index) {
-+    EnsureInit();
-+    if (audio_seed == 0) return sample;
-+    uint64_t h = audio_seed ^ (index * 6364136223846793005ULL + 1442695040888963407ULL);
-+    h ^= h >> 33; h *= 0xff51afd7ed558ccdULL; h ^= h >> 33;
-+    // Noise is tiny: ±1e-7 range — imperceptible but unique
-+    float noise = ((float)(h & 0xFFFF) / (float)0x10000 - 0.5f) * 1e-7f;
++  bool IsEnabled() { EnsureInit(); return audio_seed != 0; }
++
++  // xorshift64* — fast, high-quality
++  inline uint64_t Hash(uint64_t seed, size_t index, int channel) {
++    uint64_t h = seed
++               ^ (uint64_t(index)   * 6364136223846793005ULL)
++               ^ (uint64_t(channel) * 2685821657736338717ULL)
++               ^ 1442695040888963407ULL;
++    h ^= h >> 33; h *= 0xff51afd7ed558ccdULL;
++    h ^= h >> 33; h *= 0xc4ceb9fe1a85ec53ULL;
++    h ^= h >> 33;
++    return h;
++  }
++
++  // Add ±1e-7 noise to a float audio sample — inaudible, defeats fingerprint
++  float NoiseSample(float sample, size_t index, int channel = 0) {
++    if (!IsEnabled()) return sample;
++    uint64_t h = Hash(audio_seed, index, channel);
++    // Map to [-1e-7, +1e-7]
++    float noise = ((float)(h & 0xFFFF) / (float)0xFFFF - 0.5f) * 2.0f * 1e-7f;
 +    return sample + noise;
 +  }
++
++  // Apply noise to an entire audio channel buffer in-place
++  void ApplyNoiseToBuffer(float* data, size_t length, int channel) {
++    if (!IsEnabled() || !data) return;
++    for (size_t i = 0; i < length; ++i) {
++      data[i] = NoiseSample(data[i], i, channel);
++    }
++  }
++
 +} // namespace fwys_audio
+
+ namespace blink {
+
+@@ -85,6 +118,18 @@ void OfflineAudioDestinationHandler::StartRendering() {
+   // ... existing start rendering ...
+ }
+
++// ─── FWYS: Hook into Render() — the function that fills the output buffer ───
++// Every audio fingerprinter works like this:
++//   ctx = new OfflineAudioContext(1, 44100, 44100)
++//   oscillator → ctx.destination
++//   ctx.startRendering() → oncomplete → buffer data = fingerprint
++// We add noise AFTER Chromium renders to the buffer, BEFORE oncomplete fires.
+ void OfflineAudioDestinationHandler::Render(
+     uint32_t frames_to_process,
+     base::TimeTicks audio_delay_timestamp,
+     const media::AudioGlitchInfo& glitch_info) {
++
+   // ... existing render logic ...
++
++  // FWYS: Inject noise into rendered output BEFORE returning to JS
++  // output_bus is the rendered buffer that JS reads via AudioBuffer.getChannelData()
++  if (fwys_audio::IsEnabled() && output_bus_) {
++    for (uint32_t ch = 0; ch < output_bus_->NumberOfChannels(); ++ch) {
++      float* data = output_bus_->MutableChannel(ch)->MutableData();
++      fwys_audio::ApplyNoiseToBuffer(data, output_bus_->length(), (int)ch);
++    }
++  }
+ }
+
+--- a/third_party/blink/renderer/modules/webaudio/audio_buffer.cc
++++ b/third_party/blink/renderer/modules/webaudio/audio_buffer.cc
+@@ -1,5 +1,7 @@
+ // Copyright 2006 The Chromium Authors
++//
++// FWYS Patch 005b: AudioBuffer.getChannelData() noise injection
++// Secondary path — some fingerprinters read channel data directly
+
+ #include "third_party/blink/renderer/modules/webaudio/audio_buffer.h"
+
+@@ -70,6 +73,15 @@ NotShared<DOMFloat32Array> AudioBuffer::getChannelData(uint32_t channel_index,
+   if (channel_index >= num_channels_) { ... }
+
+   AudioChannel* channel = bus_->Channel(channel_index);
++
++  // FWYS: Apply noise to channel data before returning to JS
++  if (fwys_audio::IsEnabled()) {
++    float* data = channel->MutableData();
++    fwys_audio::ApplyNoiseToBuffer(data, (size_t)channel->length(), (int)channel_index);
++  }
++
+   return NotShared<DOMFloat32Array>(channel->GetFloat32Array());
+ }
 
 --- a/third_party/blink/renderer/modules/webaudio/realtime_analyser.cc
 +++ b/third_party/blink/renderer/modules/webaudio/realtime_analyser.cc
-@@ -180,6 +195,12 @@ void RealtimeAnalyser::GetFloatFrequencyData(NotShared<DOMFloat32Array> dest) {
+@@ -180,6 +183,12 @@ void RealtimeAnalyser::GetFloatFrequencyData(
    size_t len = std::min(fft_size_, dest->length());
    for (size_t i = 0; i < len; ++i) {
 -    dest->Data()[i] = frequency_data_[i];
-+    // FWYS: Inject audio fingerprint noise
-+    dest->Data()[i] = fwys_audio::NoiseSample(frequency_data_[i], i);
++    // FWYS: Inject noise into frequency analysis output
++    dest->Data()[i] = fwys_audio::NoiseSample(frequency_data_[i], i, 0);
+   }
+ }
+
+@@ -195,6 +200,12 @@ void RealtimeAnalyser::GetByteFrequencyData(
+   size_t len = std::min(fft_size_, dest->length());
+   for (size_t i = 0; i < len; ++i) {
+-    dest->Data()[i] = ClampTo<uint8_t>(frequency_data_[i]);
++    // FWYS: Apply noise before byte conversion (±1 LSB)
++    float noisy = fwys_audio::NoiseSample(frequency_data_[i], i, 1);
++    dest->Data()[i] = ClampTo<uint8_t>(noisy);
+   }
+ }
+
+@@ -215,6 +222,10 @@ void RealtimeAnalyser::GetFloatTimeDomainData(
+   size_t len = std::min(fft_size_, dest->length());
+   for (size_t i = 0; i < len; ++i) {
+-    dest->Data()[i] = input_buffer_.Data()[(write_index_ - len + i) % fft_size_];
++    float sample = input_buffer_.Data()[(write_index_ - len + i) % fft_size_];
++    dest->Data()[i] = fwys_audio::NoiseSample(sample, i, 2);
    }
  }

@@ -1,0 +1,107 @@
+--- a/third_party/blink/renderer/modules/battery/battery_manager.cc
++++ b/third_party/blink/renderer/modules/battery/battery_manager.cc
+@@ -1,5 +1,8 @@
+ // Copyright 2014 The Chromium Authors
+ // Use of this source code is governed by BSD-style license.
++//
++// FWYS Patch 011 (NEW): Battery API C++ spoofing
++// navigator.getBattery() returns profile-specific fake BatteryManager
++// Consistent values within a session → defeats fingerprint comparison
+
+ #include "third_party/blink/renderer/modules/battery/battery_manager.h"
++#include "base/command_line.h"
++#include "base/strings/string_number_conversions.h"
+
++// ─── FWYS Battery namespace ───────────────────────────────────────────────────
++namespace fwys_battery {
++
++  static bool charging          = false;
++  static double charging_time   = std::numeric_limits<double>::infinity(); // not charging
++  static double discharging_time = 0.0;  // computed from seed
++  static double level           = 0.0;
++  static bool initialized       = false;
++
++  void EnsureInit() {
++    if (initialized) return;
++    initialized = true;
++    auto* cmd = base::CommandLine::ForCurrentProcess();
++
++    if (cmd->HasSwitch("fwys-battery-charging")) {
++      charging = true;
++      charging_time = 0.0;
++      discharging_time = std::numeric_limits<double>::infinity();
++    }
++
++    if (cmd->HasSwitch("fwys-battery-level")) {
++      base::StringToDouble(
++          cmd->GetSwitchValueASCII("fwys-battery-level"), &level);
++      level = std::clamp(level, 0.0, 1.0);
++    } else {
++      // Derive from canvas seed for consistency — range [0.20, 0.95]
++      uint64_t seed = 0;
++      if (cmd->HasSwitch("fwys-canvas-seed"))
++        base::StringToUint64(cmd->GetSwitchValueASCII("fwys-canvas-seed"), &seed);
++      if (seed != 0) {
++        uint64_t h = seed ^ 0x4a656666726579ULL;
++        h ^= h >> 33; h *= 0xff51afd7ed558ccdULL; h ^= h >> 33;
++        level = 0.20 + ((double)(h & 0xFF) / (double)0xFF) * 0.75;
++        // Round to nearest 0.05 (like real batteries report)
++        level = std::round(level * 20.0) / 20.0;
++      } else {
++        level = 0.75;  // safe default
++      }
++    }
++
++    if (cmd->HasSwitch("fwys-battery-discharging-time")) {
++      base::StringToDouble(
++          cmd->GetSwitchValueASCII("fwys-battery-discharging-time"),
++          &discharging_time);
++    } else if (!charging) {
++      // Estimate from level: ~4 hours full charge at this level
++      discharging_time = level * 14400.0;  // seconds
++      // Round to nearest 60s (real batteries report in minutes)
++      discharging_time = std::round(discharging_time / 60.0) * 60.0;
++    }
++  }
++
++  bool IsEnabled() { EnsureInit(); return true; }
++
++} // namespace fwys_battery
+
+ namespace blink {
+
+ ScriptPromise<BatteryManager> NavigatorBattery::getBattery(
+     ScriptState* script_state) {
++
++  // FWYS: Return spoofed BatteryManager with profile values
++  fwys_battery::EnsureInit();
++
++  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver<BatteryManager>>(
++      script_state);
++  auto promise = resolver->Promise();
++
++  // Create BatteryManager with our fake values
++  auto* battery = MakeGarbageCollected<BatteryManager>(
++      script_state->GetExecutionContext());
++
++  // Override all BatteryManager properties
++  battery->SetCharging(fwys_battery::charging);
++  battery->SetChargingTime(fwys_battery::charging_time);
++  battery->SetDischargingTime(fwys_battery::discharging_time);
++  battery->SetLevel(fwys_battery::level);
++
++  resolver->Resolve(battery);
++  return promise;
+
+-  // ... original: creates BatteryDispatcher → reads real hardware ...
+ }
+
+@@ -120,10 +165,15 @@ void BatteryManager::DidUpdateData() {
+   // Called when real battery data changes — we intercept and override
++  if (fwys_battery::IsEnabled()) {
++    // Suppress real data updates — keep our fake values
++    // This prevents chargingchange/levelchange events from firing
++    return;
++  }
+   // ... original event dispatch ...
+ }

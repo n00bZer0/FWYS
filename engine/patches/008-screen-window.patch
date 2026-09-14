@@ -1,0 +1,152 @@
+--- a/third_party/blink/renderer/core/frame/screen.cc
++++ b/third_party/blink/renderer/core/frame/screen.cc
+@@ -1,5 +1,8 @@
+ // Copyright 2006 The Chromium Authors
+ // Use of this source code is governed by BSD-style license.
++//
++// FWYS Patch 008 (NEW): Screen & window dimension spoofing
++// screen.width/height/colorDepth, window.devicePixelRatio, availWidth/Height
+
+ #include "third_party/blink/renderer/core/frame/screen.h"
++#include "base/command_line.h"
++#include "base/strings/string_number_conversions.h"
+
++// ─── FWYS Screen namespace ────────────────────────────────────────────────────
++namespace fwys_screen {
++
++  static int    screen_width   = 0;
++  static int    screen_height  = 0;
++  static int    avail_width    = 0;
++  static int    avail_height   = 0;
++  static int    color_depth    = 24;
++  static double pixel_ratio    = 1.0;
++  static int    taskbar_height = 40;  // Windows taskbar default height
++  static bool initialized      = false;
++
++  void EnsureInit() {
++    if (initialized) return;
++    initialized = true;
++    auto* cmd = base::CommandLine::ForCurrentProcess();
++
++    if (cmd->HasSwitch("fwys-screen-width"))
++      base::StringToInt(cmd->GetSwitchValueASCII("fwys-screen-width"),  &screen_width);
++    if (cmd->HasSwitch("fwys-screen-height"))
++      base::StringToInt(cmd->GetSwitchValueASCII("fwys-screen-height"), &screen_height);
++    if (cmd->HasSwitch("fwys-color-depth"))
++      base::StringToInt(cmd->GetSwitchValueASCII("fwys-color-depth"),   &color_depth);
++    if (cmd->HasSwitch("fwys-dpr"))
++      base::StringToDouble(cmd->GetSwitchValueASCII("fwys-dpr"),        &pixel_ratio);
++    if (cmd->HasSwitch("fwys-taskbar-height"))
++      base::StringToInt(cmd->GetSwitchValueASCII("fwys-taskbar-height"), &taskbar_height);
++
++    // avail dimensions = screen minus taskbar
++    avail_width  = screen_width;
++    avail_height = screen_height - taskbar_height;
++  }
++
++  bool IsEnabled()      { EnsureInit(); return screen_width > 0; }
++  int  Width()          { EnsureInit(); return screen_width;   }
++  int  Height()         { EnsureInit(); return screen_height;  }
++  int  AvailWidth()     { EnsureInit(); return avail_width;    }
++  int  AvailHeight()    { EnsureInit(); return avail_height;   }
++  int  ColorDepth()     { EnsureInit(); return color_depth;    }
++  double PixelRatio()   { EnsureInit(); return pixel_ratio;    }
++
++} // namespace fwys_screen
+
+ namespace blink {
+
+ int Screen::width() const {
+-  if (LocalDOMWindow* window = DomWindow())
+-    return window->GetScreen().screen_rect.width();
+-  return 0;
++  // FWYS: Return profile screen width
++  if (fwys_screen::IsEnabled()) return fwys_screen::Width();
++  if (LocalDOMWindow* window = DomWindow())
++    return window->GetScreen().screen_rect.width();
++  return 0;
+ }
+
+ int Screen::height() const {
+-  if (LocalDOMWindow* window = DomWindow())
+-    return window->GetScreen().screen_rect.height();
+-  return 0;
++  if (fwys_screen::IsEnabled()) return fwys_screen::Height();
++  if (LocalDOMWindow* window = DomWindow())
++    return window->GetScreen().screen_rect.height();
++  return 0;
+ }
+
+ int Screen::availWidth() const {
+-  if (LocalDOMWindow* window = DomWindow())
+-    return window->GetScreen().available_rect.width();
+-  return 0;
++  if (fwys_screen::IsEnabled()) return fwys_screen::AvailWidth();
++  if (LocalDOMWindow* window = DomWindow())
++    return window->GetScreen().available_rect.width();
++  return 0;
+ }
+
+ int Screen::availHeight() const {
+-  if (LocalDOMWindow* window = DomWindow())
+-    return window->GetScreen().available_rect.height();
+-  return 0;
++  if (fwys_screen::IsEnabled()) return fwys_screen::AvailHeight();
++  if (LocalDOMWindow* window = DomWindow())
++    return window->GetScreen().available_rect.height();
++  return 0;
+ }
+
+ int Screen::colorDepth() const {
+-  return 24;  // hardcoded in Chromium
++  return fwys_screen::IsEnabled() ? fwys_screen::ColorDepth() : 24;
+ }
+
+ int Screen::pixelDepth() const {
+-  return colorDepth();
++  // Same as colorDepth — browsers return same value
++  return fwys_screen::IsEnabled() ? fwys_screen::ColorDepth() : 24;
+ }
+
+--- a/third_party/blink/renderer/core/frame/local_dom_window.cc
++++ b/third_party/blink/renderer/core/frame/local_dom_window.cc
+@@ -1,5 +1,7 @@
+ // Copyright 2006 The Chromium Authors
++//
++// FWYS Patch 008b: devicePixelRatio override in LocalDOMWindow
+
+@@ -580,6 +582,10 @@ double LocalDOMWindow::devicePixelRatio() const {
+   if (!GetFrame())
+     return 0.0;
+-  return GetFrame()->DevicePixelRatio();
++
++  // FWYS: Return profile DPR
++  if (fwys_screen::IsEnabled()) return fwys_screen::PixelRatio();
++  return GetFrame()->DevicePixelRatio();
+ }
+
+--- a/third_party/blink/renderer/core/frame/screen_orientation.cc
++++ b/third_party/blink/renderer/core/frame/screen_orientation.cc
+@@ -1,5 +1,6 @@
+ // Copyright 2014 The Chromium Authors
++// FWYS Patch 008c: Screen orientation lock to landscape-primary for desktop
+
+@@ -40,6 +42,12 @@ String ScreenOrientation::type() const {
+-  // Returns "portrait-primary" / "landscape-primary" etc.
++  // FWYS: Desktop profiles always return landscape-primary
++  if (fwys_screen::IsEnabled()) {
++    return fwys_screen::Width() >= fwys_screen::Height()
++           ? "landscape-primary"
++           : "portrait-primary";
++  }
+   // ... original code ...
+ }
+
+ uint16_t ScreenOrientation::angle() const {
+-  // Returns 0, 90, 180, or 270
++  // FWYS: Landscape = 0 degrees
++  if (fwys_screen::IsEnabled()) {
++    return fwys_screen::Width() >= fwys_screen::Height() ? 0 : 90;
++  }
+   // ... original code ...
+ }

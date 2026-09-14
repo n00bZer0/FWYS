@@ -1,0 +1,102 @@
+--- a/third_party/blink/renderer/modules/permissions/permissions.cc
++++ b/third_party/blink/renderer/modules/permissions/permissions.cc
+@@ -1,5 +1,8 @@
+ // Copyright 2015 The Chromium Authors
+ // Use of this source code is governed by BSD-style license.
++//
++// FWYS Patch 010 (NEW): Permissions API spoofing
++// navigator.permissions.query() — automation context returns "denied" for notifications,
++// real browser returns "default" (not prompted). We force "default" for all permissions.
++// This is a PRIMARY automation detection vector.
+
+ #include "third_party/blink/renderer/modules/permissions/permissions.h"
++#include "base/command_line.h"
+
++// ─── FWYS Permissions namespace ───────────────────────────────────────────────
++namespace fwys_permissions {
++
++  // Permissions that automation frameworks return incorrectly
++  // Key: permission name → Value: spoofed state
++  // "default" means user has not been asked yet (matches real browser)
++  // "denied" — for push/notifications on desktop (common default)
++  static const std::map<std::string, std::string> kPermissionOverrides = {
++    {"notifications",         "default"},  // Real browser: "default" (not prompted)
++    {"push",                  "denied"},   // Push notifications: denied by default
++    {"midi",                  "denied"},
++    {"camera",                "denied"},
++    {"microphone",            "denied"},
++    {"geolocation",           "denied"},
++    {"background-sync",       "granted"},  // Background sync: granted in real Chrome
++    {"accelerometer",         "denied"},
++    {"gyroscope",             "denied"},
++    {"magnetometer",          "denied"},
++    {"clipboard-read",        "denied"},
++    {"clipboard-write",       "granted"}, // Clipboard write: granted in real Chrome
++    {"payment-handler",       "denied"},
++    {"idle-detection",        "denied"},
++    {"periodic-background-sync", "denied"},
++    {"screen-wake-lock",      "denied"},
++    {"nfc",                   "denied"},
++    {"display-capture",       "denied"},
++    {"window-management",     "denied"},
++    {"local-fonts",           "denied"},
++    {"storage-access",        "granted"}, // Storage access: granted on most sites
++  };
++
++  bool IsEnabled() {
++    auto* cmd = base::CommandLine::ForCurrentProcess();
++    // Enabled unless --fwys-no-permission-spoof is set
++    return !cmd->HasSwitch("fwys-no-permission-spoof");
++  }
++
++  // Returns spoofed state string or empty string if no override
++  std::string GetState(const std::string& name) {
++    auto it = kPermissionOverrides.find(name);
++    return it != kPermissionOverrides.end() ? it->second : "default";
++  }
++
++} // namespace fwys_permissions
+
+ namespace blink {
+
+ ScriptPromise<V8PermissionState> Permissions::query(
+     ScriptState* script_state,
+     const ScriptValue& raw_permission,
+     ExceptionState& exception_state) {
++
++  // FWYS: Intercept permission queries and return spoofed states
++  if (fwys_permissions::IsEnabled()) {
++    // Extract permission name from the dictionary
++    auto* permission_descriptor = NativeValueTraits<PermissionDescriptor>::NativeValue(
++        script_state->GetIsolate(), raw_permission.V8Value(), exception_state);
++    if (permission_descriptor && !exception_state.HadException()) {
++      std::string name = permission_descriptor->name().Utf8();
++      std::string state_str = fwys_permissions::GetState(name);
++
++      if (!state_str.empty()) {
++        auto* resolver = MakeGarbageCollected<ScriptPromiseResolver<V8PermissionState>>(
++            script_state, exception_state.GetContext());
++        auto promise = resolver->Promise();
++
++        // Create PermissionStatus with spoofed state
++        auto* status = MakeGarbageCollected<PermissionStatus>(
++            script_state->GetExecutionContext(), nullptr, nullptr,
++            mojom::blink::PermissionDescriptor::New());
++
++        // Set the state to our spoofed value
++        if (state_str == "granted")
++          status->SetStateForTesting(mojom::blink::PermissionStatus::GRANTED);
++        else if (state_str == "denied")
++          status->SetStateForTesting(mojom::blink::PermissionStatus::DENIED);
++        else
++          status->SetStateForTesting(mojom::blink::PermissionStatus::ASK); // "default"
++
++        resolver->Resolve(
++            V8PermissionState(MakeGarbageCollected<PermissionStatus>(*status)));
++        return promise;
++      }
++    }
++  }
++
+   // ... original implementation — calls browser process via Mojo ...
+ }

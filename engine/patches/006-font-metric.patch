@@ -1,48 +1,209 @@
 --- a/third_party/blink/renderer/platform/fonts/font.cc
 +++ b/third_party/blink/renderer/platform/fonts/font.cc
-@@ -1,5 +1,7 @@
+@@ -1,5 +1,8 @@
  // Copyright 2003 The Chromium Authors
  // Use of this source code is governed by BSD-style license.
 +//
-+// FWYS Patch 006: Font metric randomization
-+// Offsets measureText() width and glyph bounds by a tiny seeded amount
++// FWYS Patch 006 (v2): Font metric noise — measureText + glyph bounds
++// Targets: Font::Width(), Font::FloatWidth(), TextMetrics, getBoundingClientRect on text
 
+ #include "third_party/blink/renderer/platform/fonts/font.h"
 +#include "base/command_line.h"
++#include "base/strings/string_number_conversions.h"
 
++// ─── FWYS Font metric namespace ───────────────────────────────────────────────
++// Used by: font.cc (Width/FloatWidth), font_metrics.cc (ascent/descent),
++//          canvas_rendering_context_2d.cc (measureText)
 +namespace fwys_font {
-+  static double metric_scale = 0.0; // 0 = disabled
-+  static bool initialized = false;
++
++  static double metric_jitter = 0.0;   // ±jitter added to each metric
++  static double metric_scale  = 1.0;   // scale factor ≈ 1.0 ± tiny
++  static uint64_t font_seed   = 0;
++  static bool initialized     = false;
 +
 +  void EnsureInit() {
 +    if (initialized) return;
 +    initialized = true;
 +    const base::CommandLine* cmd = base::CommandLine::ForCurrentProcess();
 +    if (cmd->HasSwitch("fwys-font-seed")) {
-+      std::string s = cmd->GetSwitchValueASCII("fwys-font-seed");
-+      uint64_t seed = 0;
-+      base::StringToUint64(s, &seed);
-+      if (seed != 0) {
-+        // Scale factor: 1.0 ± 0.0001 (tiny, imperceptible)
-+        uint64_t h = seed ^ 0xdeadbeefcafe1234ULL;
-+        h ^= h >> 33; h *= 0xff51afd7ed558ccdULL; h ^= h >> 33;
-+        double frac = (double)(h & 0xFFFF) / (double)0x10000; // 0..1
-+        metric_scale = 1.0 + (frac - 0.5) * 0.0002; // 0.9999 .. 1.0001
-+      }
++      base::StringToUint64(cmd->GetSwitchValueASCII("fwys-font-seed"), &font_seed);
 +    }
++    if (font_seed == 0) return;
++
++    // Derive scale factor: 1.0 ± 0.0001 (invisible but unique per profile)
++    uint64_t h = font_seed ^ 0xdeadbeefcafe1234ULL;
++    h ^= h >> 33; h *= 0xff51afd7ed558ccdULL; h ^= h >> 33;
++    double frac = (double)(h & 0xFFFF) / (double)0xFFFF;  // 0..1
++    metric_scale  = 1.0 + (frac - 0.5) * 0.0002; // [0.9999, 1.0001]
++
++    // Derive jitter: ±0.01px maximum
++    uint64_t h2 = h ^ 0x123456789abcdef0ULL;
++    h2 ^= h2 >> 33; h2 *= 0xc4ceb9fe1a85ec53ULL; h2 ^= h2 >> 33;
++    metric_jitter = ((double)(h2 & 0xFF) / (double)0xFF - 0.5) * 0.02; // [-0.01, +0.01]
 +  }
 +
-+  float ScaleMetric(float value) {
-+    EnsureInit();
-+    if (metric_scale == 0.0) return value;
-+    return value * (float)metric_scale;
++  bool IsEnabled() { EnsureInit(); return font_seed != 0; }
++
++  // Scale a width/advance value — different per profile, same within profile
++  float ScaleWidth(float value) {
++    if (!IsEnabled()) return value;
++    return (float)(value * metric_scale + metric_jitter);
 +  }
++
++  // Scale a height metric (ascent, descent, leading) — smaller jitter
++  float ScaleHeight(float value) {
++    if (!IsEnabled()) return value;
++    return (float)(value * metric_scale + metric_jitter * 0.5f);
++  }
++
++  // Deterministic per-glyph noise for character-level measurements
++  // Different characters get different noise → defeats text-width fingerprinting
++  float GlyphNoise(UChar32 codepoint) {
++    if (!IsEnabled()) return 0.0f;
++    uint64_t h = font_seed ^ ((uint64_t)codepoint * 2654435761ULL);
++    h ^= h >> 33; h *= 0xff51afd7ed558ccdULL; h ^= h >> 33;
++    return ((float)(h & 0xFF) / (float)0xFF - 0.5f) * 0.005f; // ±0.0025px per glyph
++  }
++
 +} // namespace fwys_font
 
  namespace blink {
 
- float Font::Width(const TextRun& run, ...) const {
-   float width = /* original computation */ 0.f;
-   // ... existing code ...
-+  return fwys_font::ScaleMetric(width);
+--- a/third_party/blink/renderer/platform/fonts/font.cc
++++ b/third_party/blink/renderer/platform/fonts/font.cc
+@@ -200,7 +230,9 @@ float Font::Width(const TextRun& run, ...) const {
+   // ... existing width computation ...
+   float width = primary_font->GetFontMetrics().Width(run);
 -  return width;
++  // FWYS: Apply metric noise (defeats measureText fingerprinting)
++  return fwys_font::ScaleWidth(width);
+ }
+
+@@ -210,7 +242,9 @@ float Font::FloatWidth(const TextRun& run, ...) const {
+   // ... existing float width computation ...
+   float width = primary_font->GetFontMetrics().FloatWidth(run);
+-  return width;
++  return fwys_font::ScaleWidth(width);
+ }
+
+--- a/third_party/blink/renderer/platform/fonts/font_metrics.cc
++++ b/third_party/blink/renderer/platform/fonts/font_metrics.cc
+@@ -1,5 +1,7 @@
+ // Copyright 2005 The Chromium Authors
++//
++// FWYS Patch 006b: FontMetrics ascent/descent/xHeight noise
+
+ #include "third_party/blink/renderer/platform/fonts/font_metrics.h"
+
+@@ -40,14 +42,20 @@ float FontMetrics::FloatAscent(...) const {
+-  return ascent_;
++  return fwys_font::ScaleHeight(ascent_);
+ }
+
+ float FontMetrics::FloatDescent(...) const {
+-  return descent_;
++  return fwys_font::ScaleHeight(descent_);
+ }
+
+ float FontMetrics::FloatCapHeight() const {
+-  return cap_height_;
++  return fwys_font::ScaleHeight(cap_height_);
+ }
+
+ float FontMetrics::XHeight() const {
+-  return x_height_;
++  return fwys_font::ScaleHeight(x_height_);
+ }
+
+--- a/third_party/blink/renderer/core/html/canvas/canvas_rendering_context_2d.cc
++++ b/third_party/blink/renderer/core/html/canvas/canvas_rendering_context_2d.cc
+@@ -1,5 +1,7 @@
+ // Copyright 2006 The Chromium Authors
++//
++// FWYS Patch 006c: TextMetrics (canvas measureText) noise
+
+@@ -420,12 +422,22 @@ TextMetrics* CanvasRenderingContext2D::measureText(const String& text) {
+   // ... existing measureText logic returns TextMetrics ...
+   TextMetrics* metrics = MakeGarbageCollected<TextMetrics>(
+       GetFont(), direction, baseline_type, align_type, text);
+
++  // FWYS: Apply noise to all reported TextMetrics values
++  if (fwys_font::IsEnabled()) {
++    // width — most commonly fingerprinted
++    metrics->SetWidth(fwys_font::ScaleWidth(metrics->width()));
++    // bounding boxes
++    metrics->SetActualBoundingBoxLeft(
++        fwys_font::ScaleWidth(metrics->actualBoundingBoxLeft()));
++    metrics->SetActualBoundingBoxRight(
++        fwys_font::ScaleWidth(metrics->actualBoundingBoxRight()));
++    metrics->SetActualBoundingBoxAscent(
++        fwys_font::ScaleHeight(metrics->actualBoundingBoxAscent()));
++    metrics->SetActualBoundingBoxDescent(
++        fwys_font::ScaleHeight(metrics->actualBoundingBoxDescent()));
++    // font bounding box
++    metrics->SetFontBoundingBoxAscent(
++        fwys_font::ScaleHeight(metrics->fontBoundingBoxAscent()));
++    metrics->SetFontBoundingBoxDescent(
++        fwys_font::ScaleHeight(metrics->fontBoundingBoxDescent()));
++  }
++
+   return metrics;
+ }
+
+--- a/third_party/blink/renderer/platform/fonts/font_cache.cc
++++ b/third_party/blink/renderer/platform/fonts/font_cache.cc
+@@ -1,5 +1,7 @@
+ // Copyright 2006 The Chromium Authors
++//
++// FWYS Patch 006d: Font list spoofing via font cache
++// Returns presence/absence of fonts based on profile --fwys-fonts-json list
+
+ #include "third_party/blink/renderer/platform/fonts/font_cache.h"
++#include "base/command_line.h"
++#include "base/json/json_reader.h"
+
++namespace fwys_fonts {
++  static std::set<std::string> allowed_fonts;
++  static bool restrict_fonts = false;
++  static bool initialized    = false;
++
++  void EnsureInit() {
++    if (initialized) return;
++    initialized = true;
++    auto* cmd = base::CommandLine::ForCurrentProcess();
++    if (!cmd->HasSwitch("fwys-fonts-json")) return;
++
++    std::string json_str = cmd->GetSwitchValueASCII("fwys-fonts-json");
++    // Parse ["Arial", "Times New Roman", ...]
++    auto value = base::JSONReader::Read(json_str);
++    if (!value || !value->is_list()) return;
++
++    restrict_fonts = true;
++    for (const auto& item : value->GetList()) {
++      if (item.is_string()) {
++        allowed_fonts.insert(base::ToLowerASCII(item.GetString()));
++      }
++    }
++  }
++
++  bool IsFontAllowed(const std::string& family) {
++    EnsureInit();
++    if (!restrict_fonts) return true;  // no restriction — pass through
++    return allowed_fonts.count(base::ToLowerASCII(family)) > 0;
++  }
++} // namespace fwys_fonts
+
+@@ -350,7 +370,14 @@ sk_sp<SkTypeface> FontCache::CreateTypeface(
+     const FontDescription& font_description,
+     const FontFaceCreationParams& creation_params,
+     std::string& name) {
++
++  // FWYS: Block fonts not in profile's allowed list
++  // Sites enumerate installed fonts by testing fallback behavior
++  if (!fwys_fonts::IsFontAllowed(creation_params.Family().Utf8())) {
++    // Return nullptr → Chromium falls back → font appears "not installed"
++    return nullptr;
++  }
++
+   // ... existing typeface creation ...
  }
