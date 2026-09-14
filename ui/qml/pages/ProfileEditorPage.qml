@@ -301,24 +301,30 @@ Item {
 
     // ── Collect all fields and save ──
     function saveProfile() {
-        if (!nameField.text.trim()) {
-            showStatus("Profile name is required", false)
-            return
+        console.log("[ProfileEditorPage] saveProfile() initiated...")
+        var pName = nameField.text ? nameField.text.trim() : ""
+        if (!pName) {
+            var nextNum = 1
+            if (typeof profileManager !== 'undefined' && profileManager.profileCount) {
+                nextNum = profileManager.profileCount() + 1
+            }
+            pName = "Profile #" + nextNum
+            nameField.text = pName
         }
 
         var data = {
-            name:            nameField.text.trim(),
-            notes:           notesField.text.trim(),
-            proxy_string:    proxyInput.text.trim(),
+            name:            pName,
+            notes:           notesField.text ? notesField.text.trim() : "",
+            proxy_string:    proxyInput.text ? proxyInput.text.trim() : "",
             os_type:         ["windows10","windows11","linux"][osSelector.currentIndex],
             browser_version: "auto",
-            cookies:         cookiesArea.text.trim() || "[]",
+            cookies:         (cookiesArea.text && cookiesArea.text.trim()) ? cookiesArea.text.trim() : "[]",
             extensions:      JSON.stringify(root.extensionsList)
         }
 
         // Parse proxy if entered
-        if (proxyInput.text.trim()) {
-            var parsed = profileManager.parseProxy(proxyInput.text.trim())
+        if (data.proxy_string && typeof profileManager !== 'undefined') {
+            var parsed = profileManager.parseProxy(data.proxy_string)
             data.proxy_type     = parsed.proxy_type     || "none"
             data.proxy_host     = parsed.proxy_host     || ""
             data.proxy_port     = parsed.proxy_port     || 0
@@ -351,19 +357,23 @@ Item {
 
         data.fingerprint_data = fp
 
-        var ok
-        if (isNew) {
-            ok = profileManager.createProfile(data.name)
-            // After create, get new ID and update
-            if (ok) {
-                var all = profileManager.getAllProfiles()
-                if (all.length > 0) {
-                    var newId = all[0].id
-                    profileManager.updateProfile(newId, data)
+        console.log("[ProfileEditorPage] Saving profile:", JSON.stringify(data.name), "isNew:", isNew)
+
+        var ok = false
+        if (typeof profileManager !== 'undefined') {
+            if (isNew) {
+                ok = profileManager.createProfile(data.name)
+                // After create, get new ID and update
+                if (ok) {
+                    var all = profileManager.getAllProfiles()
+                    if (all.length > 0) {
+                        var newId = all[0].id
+                        profileManager.updateProfile(newId, data)
+                    }
                 }
+            } else {
+                ok = profileManager.updateProfile(profileId, data)
             }
-        } else {
-            ok = profileManager.updateProfile(profileId, data)
         }
 
         if (ok) {
@@ -454,13 +464,18 @@ Item {
                         anchors.centerIn: parent; text: "💾 Save"
                         color: "white"; font { pixelSize: 13; weight: Font.DemiBold }
                     }
-                    MouseArea {
-                        anchors.fill: parent; cursorShape: Qt.PointingHandCursor
-                        onClicked: root.saveProfile()
-                    }
                     scale: saveBtnMa.pressed ? 0.95 : 1.0
-                    MouseArea { id: saveBtnMa; anchors.fill: parent; hoverEnabled: true }
                     Behavior on scale { NumberAnimation { duration: 80 } }
+                    MouseArea {
+                        id: saveBtnMa
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        hoverEnabled: true
+                        onClicked: {
+                            console.log("[ProfileEditorPage] Save button clicked!")
+                            root.saveProfile()
+                        }
+                    }
                 }
             }
         }
