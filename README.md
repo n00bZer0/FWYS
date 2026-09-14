@@ -11,17 +11,20 @@
 ```
 
 [![Platform: Windows](https://img.shields.io/badge/Platform-Windows%2010%2F11%20x64-blue.svg)](https://github.com/n00bZer0/FWYS)
-[![UI: Qt 6 + QML](https://img.shields.io/badge/UI-Qt%206%20%2B%20QML-41cd52.svg)](https://www.qt.io/)
+[![UI Build: Passing](https://img.shields.io/badge/UI%20Build-Passing%20(Qt%206.8.2)-brightgreen.svg)](https://github.com/n00bZer0/FWYS)
+[![Injector Tests: 4/4 Passed](https://img.shields.io/badge/Injector%20Tests-4%2F4%20Passed-brightgreen.svg)](https://github.com/n00bZer0/FWYS)
 [![Engine: Chromium](https://img.shields.io/badge/Engine-ungoogled--chromium-4285f4.svg)](https://github.com/ungoogled-software/ungoogled-chromium)
 [![Injection: Node.js CDP](https://img.shields.io/badge/Injection-Node.js%20CDP-339933.svg)](https://nodejs.org/)
 [![Language: C++20](https://img.shields.io/badge/C%2B%2B-20-00599C.svg)](https://isocpp.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**FWYS (Finish What You Start)** is a high-performance, modular antidetect browser framework designed to defeat modern browser fingerprinting systems (CreepJS, BrowserLeaks, Pixelscan, IPHEY, Cloudflare Turnstile, DataDome).
+**FWYS (Finish What You Start)** is a high-performance, modular antidetect browser framework designed to withstand advanced digital fingerprinting and bot-detection engines (CreepJS, BrowserLeaks, Pixelscan, IPHEY, Cloudflare Turnstile, DataDome).
 
-Unlike typical antidetect solutions that rely purely on JavaScript-level prototype patching (which can be easily detected via prototype pollution inspections or `toString()` checks), FWYS utilizes a **hybrid dual-layer architecture**:
-1. **Engine Level (C++ Blink/Chromium Patches):** Deep kernel-level spoofing of Canvas, WebGL, AudioContext, Font metrics, Client Hints, and WebRTC.
-2. **Runtime Level (Node.js CDP Bridge):** Chrome DevTools Protocol injection, automated fingerprint generation, dynamic stealth scripts, proxy orchestration, and profile storage.
-3. **Desktop Interface (C++ / Qt 6 + QML):** Sleek, dark glassmorphism dashboard for managing profiles, testing proxies, configuring fingerprints, and launching browser instances.
+Unlike traditional antidetect tools that rely solely on surface-level JavaScript prototype patching (which are easily flagged via prototype pollution checks, constructor tampering tests, or `toString()` inspection), FWYS implements a **dual-tier hybrid anti-detection architecture**:
+
+1. **Kernel Engine Level (C++ Blink/Chromium Patches):** Core browser modifications compiled directly into Chromium to spoof Canvas, WebGL, AudioContext, Font metrics, Client Hints, and WebRTC candidate filters at the native C++ boundary.
+2. **Runtime Bridge (Node.js CDP Injection):** Chrome DevTools Protocol engine providing dynamic `Page.addScriptToEvaluateOnNewDocument` hooks, deterministic seeded fingerprint generation, and pure WebAssembly SQLite profile management.
+3. **Desktop Interface (C++ / Qt 6 + QML):** A modern, dark glassmorphic desktop GUI for profile creation, proxy validation, fingerprint customization, and browser instance lifecycle management.
 
 ---
 
@@ -40,7 +43,7 @@ Unlike typical antidetect solutions that rely purely on JavaScript-level prototy
 │   · Pure WebAssembly SQLite Profile Reader (sql.js)       │
 │   · Dynamic Fallback Stealth Polyfills                    │
 └─────────────────────────────┬─────────────────────────────┘
-                              │ Launch Flags & CDP Port
+                              │ Launch Flags & CDP Remote Debug Port
 ┌─────────────────────────────▼─────────────────────────────┐
 │          Patched Chromium Engine (C++ / Blink)            │
 │   · 001-canvas-noise.patch      (Seeded pixel jitter)     │
@@ -70,6 +73,18 @@ Unlike typical antidetect solutions that rely purely on JavaScript-level prototy
 | **Profile Isolation** | Per-profile `user-data-dir`, separate cookies, storage, cache | OS / Chromium | Full session separation |
 | **Proxy Engine** | Per-profile SOCKS5, HTTP, HTTPS with live latency test | Node.js + Qt UI | Isolates network routing per profile |
 | **Database** | Pure WebAssembly SQLite (`sql.js`) storage | Node.js + Qt C++ | No native toolchain compile conflicts |
+
+---
+
+## 🖥 Desktop GUI Overview
+
+The Qt 6 + QML desktop interface provides complete management of your anti-detect environment:
+
+* **Dashboard (`DashboardPage.qml`):** Responsive grid of configured profiles with real-time status badges (Idle, Running, Error), proxy indicators, and one-click **Launch** / **Stop** controls.
+* **Profile Editor (`ProfileEditorPage.qml`):** Customize profile names, proxy strings (`socks5://user:pass@host:port`), User-Agent strings, and operating system targets.
+* **Fingerprint Configurator (`FingerprintPage.qml`):** Inspect and tune hardware concurrency, screen resolution, WebGL vendor/renderer strings, and canvas noise seeds with instant regeneration.
+* **Proxy Manager (`ProxyPage.qml`):** Quick-test panel for SOCKS5 and HTTP proxies with latency and connectivity verification.
+* **Settings (`SettingsPage.qml`):** Automatic detection of installed browsers (Google Chrome / ungoogled-chromium) and Node.js binary path.
 
 ---
 
@@ -118,12 +133,12 @@ FWYS/
 │   └── package.json
 │
 ├── ui/                                      # Qt 6 + QML Desktop Management Interface
-│   ├── CMakeLists.txt                       # CMake configuration for MSVC 2022
+│   ├── CMakeLists.txt                       # CMake configuration for MSVC
 │   ├── src/
-│   │   ├── main.cpp                         # Qt GUI entry point
+│   │   ├── main.cpp                         # Qt GUI entry point & logging subsystem
 │   │   ├── core/                            # Business logic controllers
 │   │   │   ├── App.h / App.cpp              # Application lifecycle coordinator
-│   │   │   ├── BrowserLauncher.h / .cpp     # Spawns Chromium process with flags
+│   │   │   ├── BrowserLauncher.h / .cpp     # Spawns Chromium/Chrome process with flags
 │   │   │   ├── DatabaseManager.h / .cpp     # Local SQLite storage wrapper
 │   │   │   ├── FingerprintConfig.h / .cpp   # Fingerprint data models
 │   │   │   ├── ProfileManager.h / .cpp      # Profile CRUD operations
@@ -132,17 +147,17 @@ FWYS/
 │   │       └── ProfileListModel.h / .cpp    # QAbstractListModel for QML views
 │   └── qml/                                 # QML user interface
 │       ├── main.qml                         # Root window & glassmorphic theme
-│       ├── components/                      # Custom UI widgets (Sidebar, Cards, Badges)
-│       └── pages/                           # Dashboard, ProfileEditor, ProxyPage, Settings
+│       ├── components/                      # Custom widgets (Sidebar, ProfileCard, LoadingSpinner)
+│       └── pages/                           # Dashboard, ProfileEditor, Fingerprint, Proxy, Settings
 │
 ├── profiles/                                # Profile storage directory
 │   ├── profiles.db                          # SQLite profile metadata database
 │   └── user_data/                           # Isolated Chromium browser data dirs
 │
 └── scripts/                                 # Developer convenience scripts
-    ├── install_qt6.ps1                      # Windows Qt 6 automated installer
-    ├── build_ui.ps1                         # PowerShell script to compile Qt UI
-    └── dev_start.ps1                        # Quick launcher for local dev environment
+    ├── install_qt6.ps1                      # Windows Qt 6 automated environment helper
+    ├── build_ui.ps1                         # Compiles Qt 6 UI and deploys runtime DLLs
+    └── dev_start.ps1                        # Launches injector daemon + Qt GUI concurrently
 ```
 
 ---
@@ -151,63 +166,85 @@ FWYS/
 
 ### Prerequisites
 - **Operating System:** Windows 10 or 11 (64-bit)
-- **Node.js:** v18.0.0 or higher
+- **Node.js:** v18.0.0 or higher (v24 compatible)
 - **Python:** 3.9+ (with `requests` installed)
-- **C++ Compiler:** Visual Studio 2022 (MSVC with "Desktop development with C++" workload)
-- **Qt 6:** Qt 6.5+ (Qt Quick, QML, Core, Gui, Sql modules)
-- **CMake:** 3.20+
+- **C++ Compiler:** Visual Studio 2022 / 2026 (MSVC with "Desktop development with C++" workload)
+- **CMake:** 3.20+ (bundled with Visual Studio)
 
 ---
 
-### Step 1: Install Node.js Dependencies
-The injector layer uses pure WebAssembly SQLite (`sql.js`) to ensure 100% compatibility across all Node versions without requiring native C++ node-gyp compilation:
+### Step 1: Install Qt 6 SDK
+Run the automated environment helper to detect or install Qt 6:
+```powershell
+.\scripts\install_qt6.ps1
+```
+Or install directly using Python's headless CLI installer:
+```powershell
+python -m pip install aqtinstall
+python -m aqt install-qt windows desktop 6.8.2 win64_msvc2022_64 -m qtwebsockets -O C:\Qt
+```
+
+---
+
+### Step 2: Install Node.js Injector Dependencies
+The injector layer uses pure WebAssembly SQLite (`sql.js`), eliminating native build errors on modern Node.js versions:
 ```powershell
 cd injector
 npm install
+node src/index.js --test
 cd ..
 ```
 
 ---
 
-### Step 2: Build the Qt 6 Desktop UI
-You can compile the modern desktop frontend using CMake:
+### Step 3: Build the Desktop Application (`FWYS.exe`)
+Compile the native C++ Qt 6 desktop application. The build script automatically detects Visual Studio, runs CMake, and uses `windeployqt` to bundle all runtime dependencies:
 ```powershell
-# Automated script (detects Qt6 installation path)
 .\scripts\build_ui.ps1
+```
+*Output binary will be generated at:* `ui\build\Release\FWYS.exe`
 
-# Or build manually with CMake:
-cmake -B ui/build -S ui -DCMAKE_PREFIX_PATH="C:/Qt/6.8.0/msvc2022_64"
-cmake --build ui/build --config Release
+---
+
+### Step 4: Launching FWYS
+You can start both the Node.js injection daemon and the Qt desktop UI concurrently:
+```powershell
+.\scripts\dev_start.ps1
+```
+Or run the compiled executable directly:
+```powershell
+.\ui\build\Release\FWYS.exe
 ```
 
 ---
 
-### Step 3: Build Patched Chromium Engine (One-Time)
-Building Chromium produces the custom patched binary containing the C++ engine-level spoofing hooks:
+### Step 5: Testing with Regular Chrome (Out of the Box)
+FWYS automatically detects installed standard browsers like **Google Chrome** (`C:\Program Files\Google\Chrome\Application\chrome.exe`):
+1. Open FWYS.
+2. Go to **Settings** to confirm the detected browser path.
+3. On the **Dashboard**, create a new profile and click **Launch**.
+4. Chrome will launch in isolated mode with dynamic CDP injection active!
+
+---
+
+### Step 6: Building the Full Patched Chromium Engine (Optional)
+To achieve kernel-level C++ spoofing (impervious to all JavaScript prototype detection):
 ```powershell
 cd engine
 
-# 1. Download Google depot_tools and configure environment
+# 1. Download Google depot_tools
 python scripts\setup_env.py
 
 # 2. Fetch ungoogled-chromium source tree
 python scripts\fetch_chromium.py
 
-# 3. Apply the 7 C++ antidetect patches
+# 3. Apply the 7 FWYS C++ patches
 python scripts\apply_patches.py
 
-# 4. Generate build configuration and compile Chromium with Ninja
+# 4. Compile Chromium with Ninja
 python scripts\build_chromium.py
 ```
-> **Note:** Compiling Chromium requires ~40 GB disk space and takes 4–8 hours depending on your CPU. In the meantime, you can test the UI and Node.js injection layer with standard Chrome or Edge by passing the `--browser-path` flag in `BrowserLauncher`.
-
----
-
-### Step 4: Launching in Development Mode
-To start the injector IPC daemon and the Qt UI concurrently:
-```powershell
-.\scripts\dev_start.ps1
-```
+> **Note:** Compiling Chromium requires ~40 GB disk space and takes 4–8 hours depending on your CPU.
 
 ---
 
