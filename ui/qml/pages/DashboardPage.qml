@@ -79,7 +79,7 @@ Item {
                 }
                 Text {
                     text: {
-                        const total   = profileModel.rowCount
+                        const total   = profileModel.count
                         const running = countRunning()
                         if (running > 0)
                             return total + " profiles · " + running + " running"
@@ -92,10 +92,9 @@ Item {
 
             Item { Layout.fillWidth: true }
 
-            // Stats row
+            // Stats & Action row
             Row {
                 spacing: 12
-                visible: profileModel.rowCount > 0
 
                 // Running count pill
                 Rectangle {
@@ -147,23 +146,6 @@ Item {
                     }
                 }
             }
-        }
-
-        // New Profile button — shown when list empty too
-        Rectangle {
-            Layout.fillWidth: true
-            height: 36; radius: 10; visible: profileModel.rowCount === 0
-            gradient: Gradient {
-                orientation: Gradient.Horizontal
-                GradientStop { position: 0.0; color: accent }
-                GradientStop { position: 1.0; color: "#A855F7" }
-            }
-            Text {
-                anchors.centerIn: parent; text: "+ Create Your First Profile"
-                color: "white"; font { pixelSize: 13; weight: Font.DemiBold }
-            }
-            MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor
-                onClicked: newProfileDialog.open() }
         }
 
         // ── Search bar ────────────────────────────────────────────────────────
@@ -285,10 +267,54 @@ Item {
                             anchors.horizontalCenter: parent.horizontalCenter
                             text: searchField.text
                                   ? "Try a different search term"
-                                  : "Click '+ New Profile' to get started"
+                                  : "Click below or '+ New Profile' above to get started"
                             color: "#3A3B52"
                             font { pixelSize: 12 }
                             horizontalAlignment: Text.AlignHCenter
+                        }
+
+                        Item { height: 6 }
+
+                        Rectangle {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            width: 170; height: 38; radius: 10
+                            visible: !searchField.text
+                            gradient: Gradient {
+                                orientation: Gradient.Horizontal
+                                GradientStop { position: 0.0; color: accent }
+                                GradientStop { position: 1.0; color: "#A855F7" }
+                            }
+                            Text {
+                                anchors.centerIn: parent
+                                text: "+ Create Profile"
+                                color: "white"
+                                font { pixelSize: 13; weight: Font.DemiBold; family: "Segoe UI" }
+                            }
+                            scale: emptyNewBtnMa.pressed ? 0.95 : 1.0
+                            Behavior on scale { NumberAnimation { duration: 100 } }
+                            MouseArea {
+                                id: emptyNewBtnMa; anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: newProfileDialog.open()
+                            }
+                        }
+
+                        Rectangle {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            width: 130; height: 34; radius: 8
+                            visible: !!searchField.text
+                            color: surface; border.color: border
+                            Text {
+                                anchors.centerIn: parent
+                                text: "Clear Search"
+                                color: textSub
+                                font { pixelSize: 12; family: "Segoe UI" }
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: searchField.text = ""
+                            }
                         }
                     }
                 }

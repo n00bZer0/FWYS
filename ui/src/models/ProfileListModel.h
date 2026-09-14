@@ -8,6 +8,7 @@ class ProfileManager;
 class ProfileListModel : public QAbstractListModel
 {
     Q_OBJECT
+    Q_PROPERTY(int count READ count NOTIFY countChanged)
 
 public:
     enum Roles {
@@ -28,6 +29,7 @@ public:
     explicit ProfileListModel(ProfileManager* pm, QObject* parent = nullptr);
 
     int rowCount(const QModelIndex& parent = QModelIndex()) const override;
+    int count() const { return m_profiles.size(); }
     QVariant data(const QModelIndex& index, int role = Qt::DisplayRole) const override;
     QHash<int, QByteArray> roleNames() const override;
 
@@ -36,6 +38,9 @@ public:
 
 public slots:
     Q_INVOKABLE void refresh();
+
+signals:
+    void countChanged();
 
 private:
     ProfileManager* m_pm;

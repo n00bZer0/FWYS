@@ -44,6 +44,7 @@ void ProfileListModel::refresh()
     QJsonArray arr = m_pm->getAllProfiles();
     for (const auto& v : arr) m_profiles.append(v.toObject());
     endResetModel();
+    emit countChanged();
 }
 
 int ProfileListModel::rowCount(const QModelIndex& parent) const

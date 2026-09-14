@@ -7,6 +7,7 @@ Rectangle {
 
     property string currentPage: "dashboard"
     signal navigate(string page)
+    signal createProfileClicked()
 
     // Right border divider
     Rectangle {
@@ -69,6 +70,30 @@ Rectangle {
             Layout.leftMargin: 16; Layout.rightMargin: 16
             height: 1; color: border
             Layout.bottomMargin: 12
+        }
+
+        // Primary Action: New Profile Button
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.leftMargin: 12; Layout.rightMargin: 12
+            Layout.bottomMargin: 14
+            height: 38; radius: 10
+            gradient: Gradient {
+                orientation: Gradient.Horizontal
+                GradientStop { position: 0.0; color: accent }
+                GradientStop { position: 1.0; color: "#A855F7" }
+            }
+            Row {
+                anchors.centerIn: parent; spacing: 8
+                Text { text: "＋"; color: "white"; font { pixelSize: 15; weight: Font.Bold } }
+                Text { text: "New Profile"; color: "white"; font { pixelSize: 13; weight: Font.DemiBold; family: "Segoe UI" } }
+            }
+            scale: sideNewMa.pressed ? 0.96 : 1.0
+            Behavior on scale { NumberAnimation { duration: 100 } }
+            MouseArea {
+                id: sideNewMa; anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                onClicked: sidebar.createProfileClicked()
+            }
         }
 
         // Nav items

@@ -65,6 +65,10 @@ ApplicationWindow {
             Layout.preferredWidth: 220
             currentPage: root.currentPage
             onNavigate: (page) => { root.currentPage = page }
+            onCreateProfileClicked: {
+                root.selectedProfileId = ""
+                root.currentPage = "editor"
+            }
         }
 
         // ─── Main Content ────────────────────────────────────────────────
