@@ -98,7 +98,6 @@ Rectangle {
 
         // Nav items
         NavItem { icon: "⊞"; label: "Profiles"; page: "dashboard"; currentPage: sidebar.currentPage; onClicked: sidebar.navigate("dashboard") }
-        NavItem { icon: "◈"; label: "Fingerprint"; page: "fingerprint"; currentPage: sidebar.currentPage; onClicked: sidebar.navigate("fingerprint") }
         NavItem { icon: "⇄"; label: "Proxy"; page: "proxy"; currentPage: sidebar.currentPage; onClicked: sidebar.navigate("proxy") }
 
         Item { Layout.fillHeight: true }

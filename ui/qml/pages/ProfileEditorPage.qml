@@ -237,38 +237,42 @@ Item {
         }
 
         function onFingerprintGenerated(profileId, success, fp, error) {
-            if (root.profileId === profileId || (!root.profileId && profileId === "temp")) {
-                root.fpGenerating = false
-                if (success) {
-                    root.profile.fingerprint_data = fp
-                    if (fp.screen_resolution) {
-                        var sIdx = resolutionCombo.model.indexOf(fp.screen_resolution)
-                        if (sIdx >= 0) resolutionCombo.currentIndex = sIdx
-                    } else if (fp.screen && fp.screen.width && fp.screen.height) {
-                        var resStr = fp.screen.width + "x" + fp.screen.height
-                        var sIdx2 = resolutionCombo.model.indexOf(resStr)
-                        if (sIdx2 >= 0) resolutionCombo.currentIndex = sIdx2
-                    }
-
-                    if (fp.hardware_concurrency || (fp.navigator && fp.navigator.hardwareConcurrency)) {
-                        var hw = (fp.hardware_concurrency || fp.navigator.hardwareConcurrency).toString()
-                        var hIdx = cpuCombo.model.indexOf(hw)
-                        if (hIdx >= 0) cpuCombo.currentIndex = hIdx
-                    }
-
-                    if (fp.device_memory || (fp.navigator && fp.navigator.deviceMemory)) {
-                        var mem = (fp.device_memory || fp.navigator.deviceMemory).toString()
-                        var mIdx = ramCombo.model.indexOf(mem)
-                        if (mIdx >= 0) ramCombo.currentIndex = mIdx
-                    }
-
-                    if (!root.isNew && root.profileId && typeof profileManager !== 'undefined') {
-                        profileManager.saveFingerprint(root.profileId, fp)
-                    }
-                    root.showStatus("Fingerprint generated ✓", true)
-                } else {
-                    root.showStatus("Fingerprint generation failed: " + (error || "Unknown error"), false)
+            root.fpGenerating = false
+            if (success) {
+                root.profile.fingerprint_data = fp
+                if (fp.screen_resolution) {
+                    var sIdx = resolutionCombo.model.indexOf(fp.screen_resolution)
+                    if (sIdx >= 0) resolutionCombo.currentIndex = sIdx
+                } else if (fp.screen && fp.screen.width && fp.screen.height) {
+                    var resStr = fp.screen.width + "x" + fp.screen.height
+                    var sIdx2 = resolutionCombo.model.indexOf(resStr)
+                    if (sIdx2 >= 0) resolutionCombo.currentIndex = sIdx2
                 }
+
+                var cpuVal = fp.hardware_concurrency || (fp.navigator && fp.navigator.hardwareConcurrency)
+                if (cpuVal) {
+                    var hIdx = cpuCombo.model.indexOf(cpuVal.toString())
+                    if (hIdx >= 0) cpuCombo.currentIndex = hIdx
+                }
+
+                var ramVal = fp.device_memory || (fp.navigator && fp.navigator.deviceMemory)
+                if (ramVal) {
+                    var mIdx = ramCombo.model.indexOf(ramVal.toString())
+                    if (mIdx >= 0) ramCombo.currentIndex = mIdx
+                }
+
+                // Update visual feedback banner
+                fpResultBanner.resolutionText = (fp.screen && fp.screen.width) ? (fp.screen.width + "x" + fp.screen.height) : (fp.screen_resolution || "1920x1080")
+                fpResultBanner.hardwareText = (cpuVal ? cpuVal + " Cores" : "8 Cores") + " · " + (ramVal ? ramVal + " GB RAM" : "8 GB RAM")
+                fpResultBanner.gpuName = (fp.webgl && fp.webgl.renderer) || (fp.gpu && fp.gpu.renderer) || "NVIDIA GeForce RTX 3060 Direct3D11"
+                fpResultBanner.visible = true
+
+                if (!root.isNew && root.profileId && typeof profileManager !== 'undefined') {
+                    profileManager.saveFingerprint(root.profileId, fp)
+                }
+                root.showStatus("Fingerprint Generated & Applied ✓", true)
+            } else {
+                root.showStatus("Fingerprint generation failed: " + (error || "Unknown error"), false)
             }
         }
 
@@ -485,11 +489,12 @@ Item {
             // TAB 0 — Basic
             // ════════════════════════════════════════════════════════════
             ScrollView {
+                id: basicScroll
                 clip: true; Layout.fillWidth: true; Layout.fillHeight: true
                 ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
                 Column {
-                    width: parent.width; spacing: 0
+                    width: basicScroll.width; spacing: 0
 
                     // Padding
                     Item { width: 1; height: 24 }
@@ -584,11 +589,12 @@ Item {
             // TAB 1 — Proxy
             // ════════════════════════════════════════════════════════════
             ScrollView {
+                id: proxyScroll
                 clip: true; Layout.fillWidth: true; Layout.fillHeight: true
                 ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
                 Column {
-                    width: parent.width; spacing: 0
+                    width: proxyScroll.width; spacing: 0
                     Item { height: 24 }
 
                     SectionCard {
@@ -618,20 +624,21 @@ Item {
 
                             // Proxy paste field
                             Rectangle {
-                                width: parent.width; height: 42; radius: 8
-                                color: surface
-                                border.color: proxyInput.activeFocus ? accent : border
+                                width: parent.width; height: 44; radius: 8
+                                color: "#181B2B"
+                                border.color: proxyInput.activeFocus ? accent : "#383E62"
+                                border.width: proxyInput.activeFocus ? 2 : 1
 
                                 TextField {
                                     id: proxyInput
-                                    anchors { fill: parent; margins: 1 }
-                                    placeholderText: "socks5://user:pass@host:1080  or  http://host:port  or  host:port:user:pass"
-                                    placeholderTextColor: textSub
-                                    color: textPrimary
+                                    anchors { fill: parent; margins: 2 }
+                                    placeholderText: "socks5://user:pass@host:port  or  http://host:port:user:pass"
+                                    placeholderTextColor: "#737A9E"
+                                    color: "#FFFFFF"
                                     background: Item {}
                                     padding: 12
                                     font.family: "Consolas"
-                                    font.pixelSize: 12
+                                    font.pixelSize: 13
                                     onTextChanged: parsedProxy.visible = false
                                 }
                             }
@@ -747,11 +754,12 @@ Item {
             // TAB 2 — Fingerprint
             // ════════════════════════════════════════════════════════════
             ScrollView {
+                id: fpScroll
                 clip: true; Layout.fillWidth: true; Layout.fillHeight: true
                 ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
                 Column {
-                    width: parent.width; spacing: 0
+                    width: fpScroll.width; spacing: 0
                     Item { height: 24 }
 
                     // Generate fingerprint button
@@ -765,17 +773,16 @@ Item {
                                 width: parent.width; spacing: 10
 
                                 ActionButton {
-                                    text: root.fpGenerating ? "Generating..." : "Auto Generate"
+                                    text: root.fpGenerating ? "Generating..." : "🎲 Randomize / Auto Generate"
                                     icon: root.fpGenerating ? "⏳" : "✨"
                                     accent: true
                                     enabled: !root.fpGenerating
                                     onClicked: {
                                         root.fpGenerating = true
-                                        // Send GENERATE_FP to Node.js
                                         ipcClient.send("generate_fp", {
-                                            profileId:  root.profileId || "temp",
+                                            profileId:  "rand_" + Date.now(),
                                             osType:     ["windows10","windows11","linux"][osSelector.currentIndex],
-                                            resolution: resolutionCombo.currentText,
+                                            randomize:  true,
                                             ipData:     {
                                                 ip:          root.profile.ip_address,
                                                 countryCode: root.profile.ip_country_code,
@@ -783,17 +790,45 @@ Item {
                                                 lat:         root.profile.ip_lat,
                                                 lng:         root.profile.ip_lng,
                                             },
-                                            hardwareConcurrency: parseInt(cpuCombo.currentText),
-                                            deviceMemory:        parseInt(ramCombo.currentText),
-                                            noiseLevel:          Math.round(noiseSlider.value),
+                                            noiseLevel: Math.round(noiseSlider.value),
                                         })
                                     }
                                 }
 
                                 Text {
-                                    text: "Uses OS + IP data to build a consistent, realistic fingerprint"
+                                    text: "1-Click builds a realistic, consistent fingerprint and randomizes hardware"
                                     color: textSub; font.pixelSize: 12
                                     Layout.fillWidth: true; wrapMode: Text.Wrap
+                                }
+                            }
+
+                            // Live Fingerprint Result Banner
+                            Rectangle {
+                                id: fpResultBanner
+                                visible: false
+                                property string gpuName: ""
+                                property string resolutionText: ""
+                                property string hardwareText: ""
+
+                                width: parent.width; height: 60; radius: 10
+                                color: "#22D3A518"; border.color: "#22D3A550"; border.width: 1
+
+                                RowLayout {
+                                    anchors { fill: parent; leftMargin: 16; rightMargin: 16 }
+                                    spacing: 12
+                                    Text { text: "✓"; color: green; font { pixelSize: 20; weight: Font.Bold } }
+                                    Column {
+                                        Layout.fillWidth: true; spacing: 3
+                                        Text {
+                                            text: "Fingerprint Generated & Ready: " + fpResultBanner.resolutionText + " · " + fpResultBanner.hardwareText
+                                            color: green; font { pixelSize: 13; weight: Font.Bold; family: "Segoe UI" }
+                                        }
+                                        Text {
+                                            text: "GPU: " + fpResultBanner.gpuName
+                                            color: textPrimary; font { pixelSize: 11; family: "Consolas" }
+                                            elide: Text.ElideRight
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -968,11 +1003,12 @@ Item {
             // TAB 3 — Geo
             // ════════════════════════════════════════════════════════════
             ScrollView {
+                id: geoScroll
                 clip: true; Layout.fillWidth: true; Layout.fillHeight: true
                 ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
                 Column {
-                    width: parent.width; spacing: 0
+                    width: geoScroll.width; spacing: 0
                     Item { height: 24 }
 
                     SectionCard {
@@ -1111,11 +1147,12 @@ Item {
             // TAB 4 — Cookies
             // ════════════════════════════════════════════════════════════
             ScrollView {
+                id: cookiesScroll
                 clip: true; Layout.fillWidth: true; Layout.fillHeight: true
                 ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
                 Column {
-                    width: parent.width; spacing: 0
+                    width: cookiesScroll.width; spacing: 0
 
                     Item { width: 1; height: 24 }
 
@@ -1246,11 +1283,12 @@ Item {
             // TAB 5 — Extensions
             // ════════════════════════════════════════════════════════════
             ScrollView {
+                id: extScroll
                 clip: true; Layout.fillWidth: true; Layout.fillHeight: true
                 ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
                 Column {
-                    width: parent.width; spacing: 0
+                    width: extScroll.width; spacing: 0
 
                     Item { width: 1; height: 24 }
 
@@ -1268,7 +1306,7 @@ Item {
                             // Add Extension Row
                             Rectangle {
                                 width: parent.width; height: 52
-                                color: surface; radius: 10; border.color: border
+                                color: "#181B2B"; radius: 10; border.color: "#383E62"; border.width: 1
 
                                 RowLayout {
                                     anchors { fill: parent; margins: 6 }
@@ -1436,19 +1474,23 @@ Item {
     // ─── Reusable inline components ──────────────────────────────────────
 
     component SectionCard: Rectangle {
+        id: secCard
         property string title: ""
         property string icon: ""
         property Item content
 
         Layout.fillWidth: true
-        width: parent ? parent.width - 48 : 600
+        width: Math.max(680, parent ? parent.width - 48 : 800)
         anchors.horizontalCenter: parent ? parent.horizontalCenter : undefined
         height: cardCol.implicitHeight + 48
-        radius: 14; color: bgCard; border.color: border
+        radius: 14; color: "#131522"; border.color: "#2C324E"; border.width: 1
 
         Column {
             id: cardCol
-            anchors { fill: parent; margins: 24 }
+            anchors {
+                top: parent.top; left: parent.left; right: parent.right
+                margins: 20
+            }
             spacing: 16
 
             // Section header
@@ -1460,12 +1502,13 @@ Item {
                     font { pixelSize: 14; weight: Font.DemiBold; family: "Segoe UI" }
                 }
             }
-            Rectangle { width: parent.width; height: 1; color: border }
+            Rectangle { width: parent.width; height: 1; color: "#252B44" }
         }
 
         onContentChanged: {
             if (content) {
                 content.parent = cardCol
+                content.width = Qt.binding(function() { return cardCol.width })
             }
         }
     }
@@ -1479,15 +1522,17 @@ Item {
         property string placeholder: ""
         property bool password: false
 
-        height: 40; radius: 8; color: surface
-        border.color: tf.activeFocus ? accent : border
+        width: parent ? parent.width : 500
+        height: 42; radius: 8; color: "#181B2B"
+        border.color: tf.activeFocus ? accent : "#383E62"
+        border.width: tf.activeFocus ? 2 : 1
 
         TextField {
             id: tf
-            anchors { fill: parent; margins: 1 }
+            anchors { fill: parent; margins: 2 }
             placeholderText: parent.placeholder
-            placeholderTextColor: textSub
-            color: textPrimary
+            placeholderTextColor: "#737A9E"
+            color: "#FFFFFF"
             background: Item {}
             padding: 12
             font { pixelSize: 13; family: "Segoe UI" }
@@ -1499,15 +1544,18 @@ Item {
         property alias text: ta.text
         property string placeholder: ""
 
-        radius: 8; color: surface; border.color: ta.activeFocus ? accent : border
+        width: parent ? parent.width : 500
+        radius: 8; color: "#181B2B"
+        border.color: ta.activeFocus ? accent : "#383E62"
+        border.width: ta.activeFocus ? 2 : 1
 
         TextArea {
             id: ta
-            anchors.fill: parent
+            anchors { fill: parent; margins: 2 }
             padding: 12
             placeholderText: parent.placeholder
-            placeholderTextColor: textSub
-            color: textPrimary
+            placeholderTextColor: "#737A9E"
+            color: "#FFFFFF"
             background: Item {}
             wrapMode: Text.Wrap
             font { pixelSize: 13; family: "Segoe UI" }

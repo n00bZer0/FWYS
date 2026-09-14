@@ -204,7 +204,10 @@ function generateFingerprint(options = {}) {
     } = options;
 
     const os = OS_DATA[osType] || OS_DATA.windows10;
-    const seed = profileId;
+    const isRandom = options.randomize || profileId === 'temp' || !profileId;
+    const seed = isRandom
+        ? (profileId + '_' + Date.now() + '_' + Math.floor(Math.random() * 100000))
+        : (profileId || 'default');
 
     // ── Browser version (Chrome latest) ──
     const chromeVersion = '131.0.0.0';
@@ -212,7 +215,8 @@ function generateFingerprint(options = {}) {
     const userAgent = `Mozilla/5.0 (${os.uaPlatform}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVersion} Safari/537.36`;
 
     // ── Screen ──
-    const resKey = resolution || Object.keys(SCREEN_RESOLUTIONS)[pseudoRandom(seed + 'res', 4)];
+    const resKeys = Object.keys(SCREEN_RESOLUTIONS);
+    const resKey = (isRandom ? null : resolution) || resKeys[pseudoRandom(seed + 'res', resKeys.length)];
     const screen = SCREEN_RESOLUTIONS[resKey] || SCREEN_RESOLUTIONS['1920x1080'];
     const dpr = osType === 'windows11' ? 1.25 : 1.0;
 
@@ -223,8 +227,8 @@ function generateFingerprint(options = {}) {
     // ── Hardware ──
     const cpuOptions = [2, 4, 6, 8, 12, 16];
     const ramOptions = [2, 4, 8, 16];
-    const cpu = hardwareConcurrency || cpuOptions[pseudoRandom(seed + 'cpu', cpuOptions.length)];
-    const ram = deviceMemory        || ramOptions[pseudoRandom(seed + 'ram', ramOptions.length)];
+    const cpu = (isRandom ? null : hardwareConcurrency) || cpuOptions[pseudoRandom(seed + 'cpu', cpuOptions.length)];
+    const ram = (isRandom ? null : deviceMemory)        || ramOptions[pseudoRandom(seed + 'ram', ramOptions.length)];
 
     // ── GPU ──
     const gpuProfile = GPU_PROFILES[pseudoRandom(seed + 'gpu', GPU_PROFILES.length)];
@@ -265,6 +269,9 @@ function generateFingerprint(options = {}) {
 
     // ── Build complete fingerprint ──
     const fp = {
+        screen_resolution:   resKey,
+        hardware_concurrency:cpu,
+        device_memory:       ram,
         navigator: {
             userAgent,
             platform:            os.platform,

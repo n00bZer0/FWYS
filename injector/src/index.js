@@ -182,18 +182,19 @@ async function main() {
   // ── Generate fingerprint for profile ────────────────────────────────────
   ipc.on('generate_fp', async (payload) => {
     const { profileId, osType, resolution, ipData,
-            hardwareConcurrency, deviceMemory, noiseLevel } = payload;
-    console.log(`  [IPC] Generate fingerprint for profile=${profileId}, os=${osType}`);
+            hardwareConcurrency, deviceMemory, noiseLevel, randomize } = payload;
+    console.log(`  [IPC] Generate fingerprint for profile=${profileId}, os=${osType}, randomize=${randomize}`);
 
     try {
       const fp = generateFingerprint({
         profileId,
         osType:              osType || 'windows10',
-        resolution:          resolution || null,
+        resolution:          randomize ? null : (resolution || null),
         ipData:              ipData || {},
-        hardwareConcurrency: hardwareConcurrency || null,
-        deviceMemory:        deviceMemory || null,
+        hardwareConcurrency: randomize ? null : (hardwareConcurrency || null),
+        deviceMemory:        randomize ? null : (deviceMemory || null),
         noiseLevel:          noiseLevel || 2,
+        randomize:           randomize !== undefined ? randomize : true,
       });
 
       ipc.send('fp_generated', {
