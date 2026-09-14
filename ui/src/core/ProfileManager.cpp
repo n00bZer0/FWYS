@@ -130,6 +130,77 @@ bool ProfileManager::createProfile(const QString& name)
     return ok;
 }
 
+QString ProfileManager::createProfileWithData(const QJsonObject& data)
+{
+    QString id  = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    QString now = QDateTime::currentDateTime().toString(Qt::ISODateWithMs);
+
+    QString name = data["name"].toString().trimmed();
+    if (name.isEmpty()) name = "Profile #" + QString::number(profileCount() + 1);
+
+    QString fpStr = "{}";
+    if (data.contains("fingerprint_data")) {
+        QJsonValue v = data["fingerprint_data"];
+        if (v.isObject()) {
+            fpStr = QJsonDocument(v.toObject()).toJson(QJsonDocument::Compact);
+        } else {
+            fpStr = v.toString("{}");
+        }
+    }
+
+    bool ok = m_db->exec(
+        "INSERT INTO profiles "
+        "(id, name, notes, proxy_string, proxy_type, proxy_host, proxy_port, "
+        " proxy_username, proxy_password, "
+        " ip_address, ip_country, ip_country_code, ip_city, "
+        " ip_timezone, ip_asn, ip_isp, ip_score, ip_type, "
+        " ip_lat, ip_lng, ip_last_tested, "
+        " os_type, browser_version, fingerprint_data, "
+        " cookies, extensions, "
+        " status, created_at, last_used_at) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        {
+            id,
+            name,
+            data["notes"].toString(),
+            data["proxy_string"].toString(),
+            data.value("proxy_type").toString("none"),
+            data["proxy_host"].toString(),
+            data.value("proxy_port").toInt(0),
+            data["proxy_username"].toString(),
+            data["proxy_password"].toString(),
+            data["ip_address"].toString(),
+            data["ip_country"].toString(),
+            data["ip_country_code"].toString(),
+            data["ip_city"].toString(),
+            data["ip_timezone"].toString(),
+            data["ip_asn"].toString(),
+            data["ip_isp"].toString(),
+            data.value("ip_score").toInt(-1),
+            data["ip_type"].toString(),
+            data.value("ip_lat").toDouble(0.0),
+            data.value("ip_lng").toDouble(0.0),
+            data["ip_last_tested"].toString(),
+            data.value("os_type").toString("windows10"),
+            data.value("browser_version").toString("auto"),
+            fpStr,
+            data.value("cookies").toString("[]"),
+            data.value("extensions").toString("[]"),
+            0,
+            now,
+            now
+        }
+    );
+
+    if (ok) {
+        qDebug() << "[ProfileManager] Created profile with full data:" << name << id;
+        QDir().mkpath(m_db->profilesDataPath() + "/" + id);
+        emit profileCreated(id);
+        return id;
+    }
+    return QString();
+}
+
 bool ProfileManager::updateProfile(const QString& id, const QJsonObject& data)
 {
     QStringList setClauses;

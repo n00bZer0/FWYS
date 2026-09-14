@@ -55,8 +55,9 @@ Item {
     property int cookieCount: 0
     property string cookieFormat: "None"
 
-    // ── Load profile on open or ID change ──
+    // ── Load profile on open or ID change or page visibility ──
     onProfileIdChanged: loadProfile()
+    onVisibleChanged: { if (visible) loadProfile() }
     Component.onCompleted: loadProfile()
 
     function analyzeCookies(text) {
@@ -93,7 +94,7 @@ Item {
     }
 
     function loadProfile() {
-        if (!isNew && typeof profileManager !== 'undefined') {
+        if (!isNew && typeof profileManager !== 'undefined' && profileId !== "") {
             var data = profileManager.getProfile(profileId)
             if (data && data.id) {
                 root.profile = data
@@ -180,16 +181,32 @@ Item {
                     root.extensionsList = []
                 }
             }
-        } else if (isNew) {
+        } else {
+            // BRAND NEW PROFILE — RESET EVERYTHING TO CLEAN DEFAULTS
+            root.profile = {
+                name: "", notes: "", proxy_string: "", proxy_type: "none",
+                proxy_host: "", proxy_port: 0, proxy_username: "", proxy_password: "",
+                ip_address: "", ip_country: "", ip_country_code: "", ip_city: "",
+                ip_timezone: "", ip_asn: "", ip_isp: "", ip_score: -1, ip_type: "",
+                ip_lat: 0, ip_lng: 0, ip_last_tested: "", os_type: "windows10",
+                browser_version: "auto", fingerprint_data: {}, cookies: "[]", extensions: "[]"
+            }
             nameField.text  = ""
             notesField.text = ""
             proxyInput.text = ""
             osSelector.currentIndex = 0
             parsedProxy.visible = false
             ipResultCard.visible = false
+            fpResultBanner.visible = false
             cookiesArea.text = "[]"
             root.extensionsList = []
             analyzeCookies("[]")
+            resolutionCombo.currentIndex = 0
+            cpuCombo.currentIndex = 2
+            ramCombo.currentIndex = 2
+            noiseSlider.value = 1
+            audioNoiseSlider.value = 1
+            editorTabs.currentIndex = 0
         }
     }
 
@@ -362,13 +379,16 @@ Item {
         var ok = false
         if (typeof profileManager !== 'undefined') {
             if (isNew) {
-                ok = profileManager.createProfile(data.name)
-                // After create, get new ID and update
-                if (ok) {
-                    var all = profileManager.getAllProfiles()
-                    if (all.length > 0) {
-                        var newId = all[0].id
-                        profileManager.updateProfile(newId, data)
+                if (typeof profileManager.createProfileWithData === 'function') {
+                    var newId = profileManager.createProfileWithData(data)
+                    ok = Boolean(newId && newId.length > 0)
+                } else {
+                    ok = profileManager.createProfile(data.name)
+                    if (ok) {
+                        var all = profileManager.getAllProfiles()
+                        if (all.length > 0) {
+                            profileManager.updateProfile(all[0].id, data)
+                        }
                     }
                 }
             } else {

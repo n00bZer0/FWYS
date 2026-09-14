@@ -68,6 +68,7 @@ public:
 
     // ── CRUD ──
     Q_INVOKABLE bool        createProfile(const QString& name);
+    Q_INVOKABLE QString     createProfileWithData(const QJsonObject& data);
     Q_INVOKABLE bool        updateProfile(const QString& id, const QJsonObject& data);
     Q_INVOKABLE bool        deleteProfile(const QString& id);
     Q_INVOKABLE QJsonObject getProfile(const QString& id);

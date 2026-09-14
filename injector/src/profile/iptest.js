@@ -111,37 +111,32 @@ async function fetchIpInfo(agent) {
     };
 }
 
-async function fetchIpData(agent) {
-    // ipdata.co — free tier, threat score
-    const data = await fetchJson('https://api.ipdata.co/?api-key=test', agent);
-
-    // Extract threat info
-    const threat = data.threat || {};
-    let score = 0;
-    if (threat.is_vpn)           score += 30;
-    if (threat.is_proxy)         score += 25;
-    if (threat.is_datacenter)    score += 20;
-    if (threat.is_anonymous)     score += 15;
-    if (threat.is_known_abuser)  score += 40;
-    if (threat.is_tor)           score += 50;
-    score = Math.min(score, 100);
-
-    // Determine type
-    let type = 'residential';
-    if (threat.is_tor)       type = 'tor';
-    else if (threat.is_vpn)  type = 'vpn';
-    else if (threat.is_datacenter) type = 'datacenter';
-    else if (threat.is_proxy) type = 'proxy';
+async function fetchIpWhoIs(agent) {
+    // ipwho.is — 100% free tier, NO API key required
+    const data = await fetchJson('https://ipwho.is/', agent);
+    if (!data || data.success === false) {
+        throw new Error('ipwho.is: ' + (data?.message || 'Lookup failed'));
+    }
 
     return {
-        score,
-        type,
-        isTor:       threat.is_tor,
-        isVpn:       threat.is_vpn,
-        isDatacenter:threat.is_datacenter,
-        isProxy:     threat.is_proxy,
-        isAbuser:    threat.is_known_abuser,
-        source:      'ipdata'
+        ip:          data.ip,
+        country:     data.country,
+        countryCode: data.country_code,
+        region:      data.region,
+        city:        data.city,
+        lat:         data.latitude,
+        lng:         data.longitude,
+        timezone:    data.timezone?.id || 'UTC',
+        isp:         data.connection?.isp || '',
+        org:         data.connection?.org || '',
+        asn:         data.connection?.asn ? ('AS' + data.connection.asn) : '',
+        score:       data.is_proxy ? 65 : 0,
+        type:        data.is_proxy ? 'proxy' : 'residential',
+        isProxy:     Boolean(data.is_proxy),
+        isVpn:       false,
+        isDatacenter:false,
+        isTor:       false,
+        source:      'ipwho.is'
     };
 }
 
@@ -164,47 +159,56 @@ async function testProxy(proxy) {
         throw new Error('Could not build proxy agent for type: ' + proxyType);
     }
 
-    // Run all 3 sources in parallel, don't fail if one fails
-    const [ipApi, ipInfo, ipDat] = await Promise.allSettled([
+    // Run 3 100% free, no-API-key-needed sources in parallel
+    const [ipApi, ipInfo, ipWho] = await Promise.allSettled([
         fetchIpApi(agent),
         fetchIpInfo(agent),
-        fetchIpData(agent),
+        fetchIpWhoIs(agent),
     ]);
 
     // Primary source: ip-api (most complete)
-    const primary = ipApi.status === 'fulfilled' ? ipApi.value : null;
+    const primary   = ipApi.status === 'fulfilled' ? ipApi.value : null;
     const secondary = ipInfo.status === 'fulfilled' ? ipInfo.value : null;
-    const threat = ipDat.status === 'fulfilled' ? ipDat.value : null;
+    const tertiary  = ipWho.status === 'fulfilled' ? ipWho.value : null;
 
-    if (!primary && !secondary) {
-        const err = ipApi.reason || ipInfo.reason;
-        throw new Error('All IP APIs failed. Proxy may be down. ' + (err?.message || ''));
+    if (!primary && !secondary && !tertiary) {
+        const err = ipApi.reason || ipInfo.reason || ipWho.reason;
+        const msg = err?.message || 'Connection failed';
+        if (msg.toLowerCase().includes('authentication failed')) {
+            throw new Error('Proxy authentication failed — please verify proxy username and password.');
+        } else if (msg.toLowerCase().includes('econnrefused') || msg.toLowerCase().includes('enotfound')) {
+            throw new Error('Proxy server unreachable (' + (proxy?.host || '') + ':' + (proxy?.port || '') + ').');
+        } else if (msg.toLowerCase().includes('timeout')) {
+            throw new Error('Proxy connection timed out. Proxy may be offline or slow.');
+        }
+        throw new Error('Proxy test failed: ' + msg);
     }
 
-    const base = primary || secondary;
+    const base = primary || secondary || tertiary;
+    const threat = tertiary || {};
 
     return {
         ip:          base.ip          || '',
-        country:     base.country     || secondary?.country     || '',
-        countryCode: base.countryCode || secondary?.country     || '',
-        city:        base.city        || secondary?.city        || '',
-        region:      base.region      || secondary?.region      || '',
-        timezone:    base.timezone    || secondary?.timezone    || 'UTC',
-        asn:         base.asn         || secondary?.org         || '',
-        isp:         base.isp         || secondary?.org         || '',
-        lat:         base.lat         || secondary?.lat         || 0,
-        lng:         base.lng         || secondary?.lng         || 0,
-        score:       threat?.score    ?? 0,
-        type:        threat?.type     || (base.isHosting ? 'datacenter' : 'residential'),
-        isProxy:     base.isProxy     || threat?.isProxy  || false,
+        country:     base.country     || secondary?.country     || tertiary?.country || '',
+        countryCode: base.countryCode || secondary?.country     || tertiary?.countryCode || '',
+        city:        base.city        || secondary?.city        || tertiary?.city || '',
+        region:      base.region      || secondary?.region      || tertiary?.region || '',
+        timezone:    base.timezone    || secondary?.timezone    || tertiary?.timezone || 'UTC',
+        asn:         base.asn         || secondary?.org         || tertiary?.asn || '',
+        isp:         base.isp         || secondary?.org         || tertiary?.isp || '',
+        lat:         base.lat         || secondary?.lat         || tertiary?.lat || 0,
+        lng:         base.lng         || secondary?.lng         || tertiary?.lng || 0,
+        score:       base.score       ?? threat?.score          ?? 0,
+        type:        base.type        || (base.isHosting ? 'datacenter' : 'residential'),
+        isProxy:     base.isProxy     || threat?.isProxy        || false,
         isVpn:       threat?.isVpn    || false,
-        isDatacenter:threat?.isDatacenter || base.isHosting || false,
+        isDatacenter:threat?.isDatacenter || base.isHosting     || false,
         isTor:       threat?.isTor    || false,
         tested_at:   new Date().toISOString(),
         sources: {
             ipApi:   ipApi.status,
             ipInfo:  ipInfo.status,
-            ipData:  ipDat.status,
+            ipWho:   ipWho.status
         }
     };
 }

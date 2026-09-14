@@ -105,7 +105,7 @@ Rectangle {
                 }
             }
 
-            // Name + status badge
+            // Name + status badge (Clickable to Edit)
             Column {
                 Layout.fillWidth: true
                 spacing: 4
@@ -125,6 +125,11 @@ Rectangle {
                         font.pixelSize: 12
                         anchors.verticalCenter: parent.verticalCenter
                     }
+                }
+                MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: card.editClicked(card.pid)
                 }
             }
 
@@ -266,78 +271,111 @@ Rectangle {
             }
         }
 
-        // ── Row 4: Launch / Stop button ───────────────────────────────────────
-        Rectangle {
+        // ── Row 4: Launch / Stop + Edit buttons ────────────────────────────────
+        RowLayout {
             Layout.fillWidth: true
-            height: 34; radius: 10
+            spacing: 8
 
-            color: {
-                if (status === 1) return Qt.rgba(1, 0.35, 0.47, 0.18)
-                if (status === 3) return Qt.rgba(0.13, 0.85, 0.64, 0.18)
-                if (status === 2) return Qt.rgba(1, 0.35, 0.47, 0.18)
-                return accent
-            }
-            Behavior on color { ColorAnimation { duration: 200 } }
-
-            border.color: {
-                if (status === 1) return Qt.rgba(1, 0.35, 0.47, 0.5)
-                if (status === 3) return Qt.rgba(0.13, 0.85, 0.64, 0.5)
-                return "transparent"
-            }
-            border.width: 1
-
-            // Press ripple
             Rectangle {
-                anchors.fill: parent; radius: parent.radius
-                color: launchMa.pressed ? "#00000030" : "transparent"
-            }
+                Layout.fillWidth: true
+                height: 34; radius: 10
 
-            // Launching spinner dot
-            Row {
-                anchors.centerIn: parent
-                spacing: 8
-                visible: status === 3
+                color: {
+                    if (status === 1) return Qt.rgba(1, 0.35, 0.47, 0.18)
+                    if (status === 3) return Qt.rgba(0.13, 0.85, 0.64, 0.18)
+                    if (status === 2) return Qt.rgba(1, 0.35, 0.47, 0.18)
+                    return accent
+                }
+                Behavior on color { ColorAnimation { duration: 200 } }
 
-                Repeater {
-                    model: 3
-                    Rectangle {
-                        width: 5; height: 5; radius: 2.5
-                        color: "#22D3A5"
-                        SequentialAnimation on opacity {
-                            running: true; loops: Animation.Infinite
-                            PauseAnimation { duration: index * 150 }
-                            NumberAnimation { to: 1.0; duration: 200 }
-                            NumberAnimation { to: 0.2; duration: 400 }
-                            PauseAnimation { duration: (2 - index) * 150 }
+                border.color: {
+                    if (status === 1) return Qt.rgba(1, 0.35, 0.47, 0.5)
+                    if (status === 3) return Qt.rgba(0.13, 0.85, 0.64, 0.5)
+                    return "transparent"
+                }
+                border.width: 1
+
+                // Press ripple
+                Rectangle {
+                    anchors.fill: parent; radius: parent.radius
+                    color: launchMa.pressed ? "#00000030" : "transparent"
+                }
+
+                // Launching spinner dot
+                Row {
+                    anchors.centerIn: parent
+                    spacing: 8
+                    visible: status === 3
+
+                    Repeater {
+                        model: 3
+                        Rectangle {
+                            width: 5; height: 5; radius: 2.5
+                            color: "#22D3A5"
+                            SequentialAnimation on opacity {
+                                running: true; loops: Animation.Infinite
+                                PauseAnimation { duration: index * 150 }
+                                NumberAnimation { to: 1.0; duration: 200 }
+                                NumberAnimation { to: 0.2; duration: 400 }
+                                PauseAnimation { duration: (2 - index) * 150 }
+                            }
+                        }
+                    }
+                }
+
+                Text {
+                    anchors.centerIn: parent
+                    visible: status !== 3
+                    text: status === 1 ? "⏹   Stop"
+                        : status === 2 ? "⟳   Retry"
+                        : "▶   Launch"
+                    color: status === 1 ? "#FF6B6B"
+                         : status === 2 ? "#F59E0B"
+                         : "white"
+                    font { pixelSize: 13; weight: Font.DemiBold; family: "Segoe UI" }
+                }
+
+                MouseArea {
+                    id: launchMa
+                    anchors.fill: parent
+                    cursorShape: status === 3 ? Qt.BusyCursor : Qt.PointingHandCursor
+                    enabled: status !== 3
+
+                    onClicked: {
+                        if (status === 1) {
+                            card.stopClicked(card.pid)
+                        } else {
+                            card.launchClicked(card.pid)
                         }
                     }
                 }
             }
 
-            Text {
-                anchors.centerIn: parent
-                visible: status !== 3
-                text: status === 1 ? "⏹   Stop"
-                    : status === 2 ? "⟳   Retry"
-                    : "▶   Launch"
-                color: status === 1 ? "#FF6B6B"
-                     : status === 2 ? "#F59E0B"
-                     : "white"
-                font { pixelSize: 13; weight: Font.DemiBold; family: "Segoe UI" }
-            }
+            // Dedicated Edit Button
+            Rectangle {
+                width: 68; height: 34; radius: 10
+                color: surface
+                border.color: editBtnMa.containsMouse ? accent : borderColor
+                border.width: 1
+                Behavior on border.color { ColorAnimation { duration: 150 } }
 
-            MouseArea {
-                id: launchMa
-                anchors.fill: parent
-                cursorShape: status === 3 ? Qt.BusyCursor : Qt.PointingHandCursor
-                enabled: status !== 3
-
-                onClicked: {
-                    if (status === 1) {
-                        card.stopClicked(card.pid)
-                    } else {
-                        card.launchClicked(card.pid)
+                Row {
+                    anchors.centerIn: parent
+                    spacing: 4
+                    Text { text: "✏"; font.pixelSize: 12 }
+                    Text {
+                        text: "Edit"
+                        color: textPrimary
+                        font { pixelSize: 12; weight: Font.DemiBold; family: "Segoe UI" }
                     }
+                }
+
+                MouseArea {
+                    id: editBtnMa
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: card.editClicked(card.pid)
                 }
             }
         }
