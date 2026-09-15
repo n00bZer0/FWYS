@@ -11,6 +11,7 @@
 #include <QLocalSocket>
 #include <QDebug>
 #include <QCryptographicHash>
+#include <QRegularExpression>
 
 BrowserLauncher::BrowserLauncher(ProfileManager* profileManager,
                                   DatabaseManager* db,
@@ -97,8 +98,18 @@ QStringList BrowserLauncher::buildChromiumArgs(const QJsonObject& profile, int d
 
 
     // Navigator fields
-    QString osType      = profile["os_type"].toString("windows10");
-    QString userAgent   = fpStr_("navigator.userAgent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.6834.160 Safari/537.36");
+    QString osType        = profile["os_type"].toString("windows10");
+    QString userAgent     = fpStr_("navigator.userAgent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.8010.36 Safari/537.36");
+    // Extract chrome version from UA for --fwys-ua-brands (must match binary!)
+    // Format: ...Chrome/153.0.8010.36... → minor="153", full="153.0.8010.36"
+    QString chromeMinor = "153";
+    QString chromeFull  = "153.0.8010.36";
+    QRegularExpression versionRx("Chrome\\/(\\d+)\\.(\\S+)");
+    QRegularExpressionMatch vm = versionRx.match(userAgent);
+    if (vm.hasMatch()) {
+        chromeMinor = vm.captured(1);
+        chromeFull  = vm.captured(1) + "." + vm.captured(2);
+    }
     QString platform    = fpStr_("navigator.platform", "Win32");
     int     hwConcurrency = fpInt_("navigator.hardwareConcurrency", 8);
     int     deviceMemory  = fpInt_("navigator.deviceMemory", 8);
@@ -199,10 +210,10 @@ QStringList BrowserLauncher::buildChromiumArgs(const QJsonObject& profile, int d
         << QString("--fwys-screen-width=%1").arg(screenW)
         << QString("--fwys-screen-height=%1").arg(screenH)
         << QString("--window-size=%1,%2").arg(screenW).arg(screenH)
-        << "--fwys-ua-brands=[{\"brand\":\"Google Chrome\",\"version\":\"132\"},{\"brand\":\"Not_A Brand\",\"version\":\"8\"},{\"brand\":\"Chromium\",\"version\":\"132\"}]"
+        << QString("--fwys-ua-brands=[{\"brand\":\"Google Chrome\",\"version\":\"%1\"},{\"brand\":\"Not_A Brand\",\"version\":\"8\"},{\"brand\":\"Chromium\",\"version\":\"%1\"}]").arg(chromeMinor)
         << "--fwys-ua-platform=Windows"
         << "--fwys-ua-platform-version=10.0.0"
-        << "--fwys-ua-full-version=132.0.6834.160";
+        << QString("--fwys-ua-full-version=%1").arg(chromeFull);
 
     // WebRTC: filter local IP so proxy exit IP shows, only block if explicitly configured
     QString webrtcMode = fpStr_("webrtc.mode", fpStr_("webrtc_mode", "filter_local"));
@@ -351,6 +362,19 @@ bool BrowserLauncher::launchProfile(const QString& profileId)
         fpPayload = profile["fingerprint_data"].toObject();
     } else if (profile.contains("fingerprint_data")) {
         fpPayload = QJsonDocument::fromJson(profile["fingerprint_data"].toString("{}").toUtf8()).object();
+    }
+    // Inject publicIp into fingerprint so WebRTC JS filter replaces real IPs
+    // ip_address is stored after a successful proxy test (test_proxy IPC command)
+    QString proxyExitIp = profile["ip_address"].toString();
+    if (!proxyExitIp.isEmpty()) {
+        fpPayload["publicIp"] = proxyExitIp;
+        QJsonObject webrtcObj;
+        webrtcObj["mode"]     = QString("filter_local");
+        webrtcObj["publicIp"] = proxyExitIp;
+        fpPayload["webrtc"]   = webrtcObj;
+        QJsonObject metaObj   = fpPayload["meta"].toObject();
+        metaObj["ipSource"]   = proxyExitIp;
+        fpPayload["meta"]     = metaObj;
     }
     ipcPayload["fingerprint"] = fpPayload;
 
