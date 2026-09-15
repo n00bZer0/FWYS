@@ -356,6 +356,14 @@ bool BrowserLauncher::launchProfile(const QString& profileId)
     ipcPayload["profileId"]    = profileId;
     ipcPayload["chromiumPath"] = m_chromiumPath;
     ipcPayload["debugPort"]    = debugPort;
+
+    // Read proxy config from profile for Node.js auto-resolve
+    QString lpProxyType = profile["proxy_type"].toString("none");
+    QString lpProxyHost = profile["proxy_host"].toString();
+    int     lpProxyPort = profile["proxy_port"].toInt(0);
+    QString lpProxyUser = profile["proxy_username"].toString();
+    QString lpProxyPass = profile["proxy_password"].toString();
+
     QJsonObject fpPayload;
 
     if (profile["fingerprint_data"].isObject()) {
@@ -381,6 +389,17 @@ bool BrowserLauncher::launchProfile(const QString& profileId)
     // Cookies for CDP injection
     if (profile.contains("cookies")) {
         ipcPayload["cookies"] = profile["cookies"].toString("[]");
+    }
+
+    // Send proxy config so Node.js can auto-resolve exit IP if ip_address was empty
+    if (lpProxyType != "none" && !lpProxyHost.isEmpty() && lpProxyPort > 0) {
+        QJsonObject proxyCfg;
+        proxyCfg["type"]     = lpProxyType;
+        proxyCfg["host"]     = lpProxyHost;
+        proxyCfg["port"]     = lpProxyPort;
+        proxyCfg["username"] = lpProxyUser;
+        proxyCfg["password"] = lpProxyPass;
+        ipcPayload["proxyConfig"] = proxyCfg;
     }
 
     sendIPCCommand("attach_cdp", ipcPayload);

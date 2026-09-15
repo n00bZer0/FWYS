@@ -85,10 +85,14 @@ try { delete navigator.pdfViewerEnabled; } catch (e) {}
 // P1 — navigator.userAgentData (Client Hints JS API)
 // Modern sites ALWAYS check this. Must match Sec-CH-UA headers exactly.
 // ─────────────────────────────────────────────────────────────────────────
+// Dynamic from fingerprint — never hardcode versions here
+const _chromeMinor = String(fp.browser?.version || hints.brands?.[0]?.version || '153');
+const _chromeFull  = String(fp.browser?.fullVersion || `${_chromeMinor}.0.8010.36`);
+
 const uaDataBrands = hints.brands || [
-  { brand: 'Google Chrome',  version: '132' },
-  { brand: 'Not_A Brand',    version: '8'   },
-  { brand: 'Chromium',       version: '132' },
+  { brand: 'Google Chrome', version: _chromeMinor },
+  { brand: 'Not_A Brand',   version: '8'          },
+  { brand: 'Chromium',      version: _chromeMinor },
 ];
 const uaDataPlatform = hints.platform || 'Windows';
 const uaDataMobile   = hints.mobile   || false;
@@ -101,7 +105,7 @@ const uaDataObj = {
   getHighEntropyValues: async function(hints_) {
     const fullVersionList = (uaDataBrands || []).map(b => ({
       brand:   b.brand,
-      version: fp.browser?.fullVersion || '131.0.0.0',
+      version: _chromeFull,
     }));
 
     const highEntropy = {
@@ -113,7 +117,7 @@ const uaDataObj = {
       bitness:           fp.clientHints?.bitness            || '64',
       model:             fp.clientHints?.model              || '',
       fullVersionList,
-      uaFullVersion:     fp.browser?.fullVersion            || '132.0.6834.160',
+      uaFullVersion:     _chromeFull,
       wow64:             fp.clientHints?.wow64              || false,
     };
 

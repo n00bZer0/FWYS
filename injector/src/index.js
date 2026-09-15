@@ -88,7 +88,7 @@ async function main() {
   //   3. We connect CDP and inject JS stealth scripts
   //   4. All C++ + JS patches now active
   ipc.on('attach_cdp', async (payload) => {
-    const { profileId, debugPort, fingerprint, cookies } = payload;
+    const { profileId, debugPort, fingerprint, cookies, proxyConfig } = payload;
     console.log(`  [IPC] attach_cdp: profile=${profileId}, port=${debugPort}`);
 
     try {
@@ -99,7 +99,39 @@ async function main() {
         cookiesToInject = CookieHelper.parse(cookies);
       }
 
-      const session = await CDPManager.attachOnly(profileId, debugPort, fingerprint, cookiesToInject);
+      // ── Auto-resolve proxy exit IP if missing ──────────────────────────────
+      // If Qt didn't send publicIp (ip_address was empty — user never ran proxy test),
+      // we auto-test the proxy here so the WebRTC filter gets the correct exit IP.
+      let fp = fingerprint || {};
+      const hasPublicIp = fp.publicIp && fp.publicIp.length > 4;
+      const hasProxyCfg = proxyConfig && proxyConfig.host && proxyConfig.port > 0;
+
+      if (!hasPublicIp && hasProxyCfg) {
+        console.log(`  [IPC] attach_cdp: publicIp missing — auto-resolving via proxy test...`);
+        try {
+          const ipData = await testProxy(proxyConfig);
+          if (ipData && ipData.ip) {
+            fp = { ...fp };
+            fp.publicIp = ipData.ip;
+            fp.webrtc   = { ...(fp.webrtc || {}), mode: 'filter_local', publicIp: ipData.ip };
+            fp.meta     = { ...(fp.meta   || {}), ipSource: ipData.ip };
+            console.log(`  [IPC] attach_cdp: auto-resolved publicIp=${ipData.ip}`);
+            // Notify Qt so it can update the DB for next time
+            ipc.send('proxy_ip_resolved', { profileId, ipData });
+          }
+        } catch (ipErr) {
+          console.warn(`  [WARN] attach_cdp: auto proxy test failed: ${ipErr.message}`);
+          // Fail-safe: block WebRTC entirely so real IP never leaks
+          fp = { ...fp };
+          fp.webrtc = { ...(fp.webrtc || {}), mode: 'block' };
+        }
+      } else if (!hasPublicIp && !hasProxyCfg) {
+        // No proxy config at all — block WebRTC to prevent any IP leak
+        fp = { ...fp };
+        fp.webrtc = { ...(fp.webrtc || {}), mode: 'block' };
+      }
+
+      const session = await CDPManager.attachOnly(profileId, debugPort, fp, cookiesToInject);
 
       ipc.send('cdp_attached', {
         profileId,
@@ -116,6 +148,7 @@ async function main() {
       });
     }
   });
+
 
   // ── Parse cookies (JSON or Netscape) ───────────────────────────────────
   ipc.on('parse_cookies', async (payload) => {

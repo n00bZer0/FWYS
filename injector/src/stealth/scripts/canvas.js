@@ -78,3 +78,108 @@ if (typeof CanvasRenderingContext2D !== 'undefined' && CanvasRenderingContext2D.
 
   CanvasRenderingContext2D.prototype.getImageData = nativeGetImageData;
 }
+
+// ── Patch HTMLCanvasElement.prototype.toDataURL ───────────────────────────────
+// BrowserLeaks, Pixelscan, and most fingerprint sites use toDataURL() to hash canvas
+if (typeof HTMLCanvasElement !== 'undefined' && HTMLCanvasElement.prototype.toDataURL) {
+  const _origToDataURL = HTMLCanvasElement.prototype.toDataURL;
+  const _toDataURLWrapper = {
+    toDataURL(type, ...rest) {
+      if (!(this instanceof HTMLCanvasElement)) {
+        throw new TypeError("Failed to execute 'toDataURL' on 'HTMLCanvasElement': Illegal invocation");
+      }
+      // Inject 1 noise pixel via getImageData/putImageData before reading
+      try {
+        const ctx = this.getContext('2d');
+        if (ctx && this.width > 2 && this.height > 2) {
+          // Read one pixel from non-trivial canvas, perturb it, put back
+          const img = ctx.getImageData(1, 1, 1, 1);
+          if (img.data[3] !== 0) {  // non-transparent
+            let h = (1 * 374761393 + 1 * 668265263 + _canvasSeed) >>> 0;
+            h = ((h ^ (h >>> 13)) * 1274126177) >>> 0;
+            if ((h & 3) === 1) {
+              img.data[2] ^= 1;  // flip 1 bit on B channel
+            }
+            ctx.putImageData(img, 1, 1);
+          }
+        }
+      } catch (e) {}
+      return _origToDataURL.call(this, type, ...rest);
+    }
+  };
+  const nativeToDataURL = _toDataURLWrapper.toDataURL;
+  try { delete nativeToDataURL.prototype; } catch (e) {}
+  Object.defineProperty(nativeToDataURL, 'name', { value: 'toDataURL', configurable: true });
+  Object.defineProperty(nativeToDataURL, 'toString', {
+    value: () => 'function toDataURL() { [native code] }',
+    configurable: true,
+  });
+  HTMLCanvasElement.prototype.toDataURL = nativeToDataURL;
+}
+
+// ── Patch HTMLCanvasElement.prototype.toBlob ──────────────────────────────────
+if (typeof HTMLCanvasElement !== 'undefined' && HTMLCanvasElement.prototype.toBlob) {
+  const _origToBlob = HTMLCanvasElement.prototype.toBlob;
+  const _toBlobWrapper = {
+    toBlob(callback, type, ...rest) {
+      if (!(this instanceof HTMLCanvasElement)) {
+        throw new TypeError("Failed to execute 'toBlob' on 'HTMLCanvasElement': Illegal invocation");
+      }
+      try {
+        const ctx = this.getContext('2d');
+        if (ctx && this.width > 2 && this.height > 2) {
+          const img = ctx.getImageData(1, 1, 1, 1);
+          if (img.data[3] !== 0) {
+            let h = (1 * 374761393 + 1 * 668265263 + _canvasSeed) >>> 0;
+            h = ((h ^ (h >>> 13)) * 1274126177) >>> 0;
+            if ((h & 3) === 1) { img.data[2] ^= 1; }
+            ctx.putImageData(img, 1, 1);
+          }
+        }
+      } catch (e) {}
+      return _origToBlob.call(this, callback, type, ...rest);
+    }
+  };
+  const nativeToBlob = _toBlobWrapper.toBlob;
+  try { delete nativeToBlob.prototype; } catch (e) {}
+  Object.defineProperty(nativeToBlob, 'name', { value: 'toBlob', configurable: true });
+  Object.defineProperty(nativeToBlob, 'toString', {
+    value: () => 'function toBlob() { [native code] }',
+    configurable: true,
+  });
+  HTMLCanvasElement.prototype.toBlob = nativeToBlob;
+}
+
+// ── Patch OffscreenCanvas.prototype.convertToBlob (Worker canvas) ─────────────
+if (typeof OffscreenCanvas !== 'undefined' && OffscreenCanvas.prototype && OffscreenCanvas.prototype.convertToBlob) {
+  const _origConvertToBlob = OffscreenCanvas.prototype.convertToBlob;
+  const _convertToBlobWrapper = {
+    async convertToBlob(options) {
+      if (!(this instanceof OffscreenCanvas)) {
+        throw new TypeError("Failed to execute 'convertToBlob' on 'OffscreenCanvas': Illegal invocation");
+      }
+      try {
+        const ctx = this.getContext('2d');
+        if (ctx && this.width > 2 && this.height > 2) {
+          const img = ctx.getImageData(1, 1, 1, 1);
+          if (img.data[3] !== 0) {
+            let h = (1 * 374761393 + 1 * 668265263 + _canvasSeed) >>> 0;
+            h = ((h ^ (h >>> 13)) * 1274126177) >>> 0;
+            if ((h & 3) === 1) { img.data[2] ^= 1; }
+            ctx.putImageData(img, 1, 1);
+          }
+        }
+      } catch (e) {}
+      return _origConvertToBlob.call(this, options);
+    }
+  };
+  const nativeConvertToBlob = _convertToBlobWrapper.convertToBlob;
+  try { delete nativeConvertToBlob.prototype; } catch (e) {}
+  Object.defineProperty(nativeConvertToBlob, 'name', { value: 'convertToBlob', configurable: true });
+  Object.defineProperty(nativeConvertToBlob, 'toString', {
+    value: () => 'function convertToBlob() { [native code] }',
+    configurable: true,
+  });
+  OffscreenCanvas.prototype.convertToBlob = nativeConvertToBlob;
+}
+
