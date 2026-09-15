@@ -98,22 +98,52 @@ QStringList BrowserLauncher::buildChromiumArgs(const QJsonObject& profile, int d
 
     // Navigator fields
     QString osType      = profile["os_type"].toString("windows10");
-    QString userAgent   = fpStr_("navigator.userAgent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36");
+    QString userAgent   = fpStr_("navigator.userAgent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.6834.160 Safari/537.36");
     QString platform    = fpStr_("navigator.platform", "Win32");
     int     hwConcurrency = fpInt_("navigator.hardwareConcurrency", 8);
     int     deviceMemory  = fpInt_("navigator.deviceMemory", 8);
 
+    // If fingerprint_data is empty (never generated), use stored IP/profile data
+    // to at least get the timezone and hardware right at launch
+    if (fp.isEmpty() || fp.keys().size() < 3) {
+        // Build minimal fingerprint from profile IP fields
+        QString ipTimezone = profile["ip_timezone"].toString();
+        if (!ipTimezone.isEmpty()) {
+            // Will be passed to Node.js via fingerprint payload
+            // so it gets timezone right even without explicit generation
+            QJsonObject minimalNav;
+            minimalNav["userAgent"] = userAgent;
+            minimalNav["platform"]  = "Win32";
+            minimalNav["hardwareConcurrency"] = 8;
+            minimalNav["deviceMemory"]  = 8;
+            fp["navigator"] = minimalNav;
+            fp["timezone"]  = ipTimezone;
+            fp["os"]        = QJsonObject{{ "type", osType }};
+        }
+    }
+
     // GPU
     QString webglVendor   = fpStr_("gpu.vendor",   "Google Inc. (NVIDIA)");
-    QString webglRenderer = fpStr_("gpu.renderer",  "ANGLE (NVIDIA, NVIDIA GeForce GTX 1650 Direct3D11 vs_5_0 ps_5_0, D3D11)");
+    QString webglRenderer = fpStr_("gpu.renderer",  "ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)");
 
     // Screen
     int screenW = fpInt_("screen.width",  1920);
     int screenH = fpInt_("screen.height", 1080);
 
-    // Noise seeds (deterministic per profile)
-    quint64 canvasSeed = profileSeed(profileId, "canvas");
+    // Noise seeds: PREFER values from fingerprint_data (set by JS generator)
+    // so that C++ (hardware-level) and JS (CDP-level) noise are in sync.
+    // Fallback to C++ hash-based seed if not set.
+    quint64 canvasSeed = profileSeed(profileId, "canvas");  // C++ default
     quint64 audioSeed  = profileSeed(profileId, "audio");
+    // Read from fp if available (set by Node.js generator)
+    if (fp.contains("canvas") && fp["canvas"].isObject()) {
+        quint64 fpCanvasSeed = (quint64)fp["canvas"].toObject()["seed"].toDouble(0);
+        if (fpCanvasSeed > 0) canvasSeed = fpCanvasSeed;
+    }
+    if (fp.contains("audio") && fp["audio"].isObject()) {
+        quint64 fpAudioSeed = (quint64)fp["audio"].toObject()["seed"].toDouble(0);
+        if (fpAudioSeed > 0) audioSeed = fpAudioSeed;
+    }
 
     // Proxy
     QString proxyType = profile["proxy_type"].toString("none");
@@ -132,8 +162,8 @@ QStringList BrowserLauncher::buildChromiumArgs(const QJsonObject& profile, int d
     args
         // Removes navigator.webdriver=true (most important flag)
         << "--disable-blink-features=AutomationControlled"
-        // Route all WebRTC through proxy — no STUN to real IP
-        << "--force-webrtc-ip-handling-policy=disable_non_proxied_udp"
+        // Suppresses "unsupported command-line flag" warning banners
+        << "--test-type"
         // No background requests on real IP
         << "--disable-background-networking"
         // No hyperlink auditing (ping)
@@ -157,6 +187,7 @@ QStringList BrowserLauncher::buildChromiumArgs(const QJsonObject& profile, int d
 
     // ── P0: FWYS fingerprint flags (custom Chromium patches) ────────────
     args
+        << QString("--user-agent=%1").arg(userAgent)
         << QString("--fwys-canvas-seed=%1").arg(canvasSeed)
         << QString("--fwys-audio-seed=%1").arg(audioSeed)
         << QString("--fwys-platform=%1").arg(platform)
@@ -167,9 +198,20 @@ QStringList BrowserLauncher::buildChromiumArgs(const QJsonObject& profile, int d
         << QString("--fwys-webgl-renderer=%1").arg(webglRenderer)
         << QString("--fwys-screen-width=%1").arg(screenW)
         << QString("--fwys-screen-height=%1").arg(screenH)
-        // Block WebRTC entirely (safest)
-        << "--fwys-block-webrtc"
-        << "--fwys-webrtc-filter-local";
+        << QString("--window-size=%1,%2").arg(screenW).arg(screenH)
+        << "--fwys-ua-brands=[{\"brand\":\"Google Chrome\",\"version\":\"132\"},{\"brand\":\"Not_A Brand\",\"version\":\"8\"},{\"brand\":\"Chromium\",\"version\":\"132\"}]"
+        << "--fwys-ua-platform=Windows"
+        << "--fwys-ua-platform-version=10.0.0"
+        << "--fwys-ua-full-version=132.0.6834.160";
+
+    // WebRTC: filter local IP so proxy exit IP shows, only block if explicitly configured
+    QString webrtcMode = fpStr_("webrtc.mode", fpStr_("webrtc_mode", "filter_local"));
+    if (webrtcMode == "block") {
+        args << "--fwys-block-webrtc"
+             << "--force-webrtc-ip-handling-policy=disable_non_proxied_udp";
+    } else {
+        args << "--fwys-webrtc-filter-local";
+    }
 
     // ── Proxy configuration ───────────────────────────────────────────────
     if (proxyType != "none" && !proxyHost.isEmpty() && proxyPort > 0) {
@@ -236,9 +278,7 @@ QStringList BrowserLauncher::buildChromiumArgs(const QJsonObject& profile, int d
     }
 
     // ── OS-specific hardening ─────────────────────────────────────────────
-#ifdef Q_OS_WIN
-    args << "--disable-gpu-sandbox";  // needed on some Windows configs
-#endif
+    // Note: --disable-gpu-sandbox removed to eliminate unsupported flag warning banner
 
     return args;
 }
@@ -362,6 +402,9 @@ QString BrowserLauncher::detectChromiumPath()
 {
     QString appDir = QCoreApplication::applicationDirPath();
     QStringList candidates = {
+        // System Chrome (contains Google-signed Widevine CDM and proprietary codecs)
+        "C:/Program Files/Google/Chrome/Application/chrome.exe",
+        "C:/Program Files (x86)/Google/Chrome/Application/chrome.exe",
         // Portable bundle locations
         appDir + "/chromium/chrome.exe",
         appDir + "/bin/chrome.exe",
@@ -372,9 +415,6 @@ QString BrowserLauncher::detectChromiumPath()
         QDir::currentPath() + "/../dist/chromium/chrome.exe",
         QDir::currentPath() + "/dist/chromium/chrome.exe",
         QDir::currentPath() + "/../chromium/chrome.exe",
-        // System Chrome
-        "C:/Program Files/Google/Chrome/Application/chrome.exe",
-        "C:/Program Files (x86)/Google/Chrome/Application/chrome.exe",
         // System Edge fallback
         "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
         "C:/Program Files/Microsoft/Edge/Application/msedge.exe"

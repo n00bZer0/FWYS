@@ -246,7 +246,30 @@ Item {
                     if (!root.isNew && root.profileId && typeof profileManager !== 'undefined') {
                         profileManager.saveIpResult(root.profileId, ipData)
                     }
-                    root.showStatus("Proxy test succeeded ✓ (" + (ipData.ip || "") + ")", true)
+
+                    // AUTO: Regenerate fingerprint with correct IP data (timezone/language/geo)
+                    // This ensures the fingerprint always matches the proxy location
+                    root.fpGenerating = true
+                    var fpProfileId = root.profileId || ("new_" + Date.now())
+                    ipcClient.send("generate_fp", {
+                        profileId:          fpProfileId,
+                        osType:             ["windows10","windows11","linux"][osSelector.currentIndex],
+                        randomize:          false,   // deterministic — same profile = same FP
+                        hardwareConcurrency: parseInt(cpuCombo.currentText) || null,
+                        deviceMemory:        parseInt(ramCombo.currentText) || null,
+                        resolution:          resolutionCombo.currentText || null,
+                        noiseLevel:          Math.round(noiseSlider.value),
+                        ipData: {
+                            ip:          ipData.ip || "",
+                            country:     ipData.country || "",
+                            countryCode: ipData.countryCode || "",
+                            timezone:    ipData.timezone || "",
+                            lat:         ipData.lat || 0,
+                            lng:         ipData.lng || 0,
+                        }
+                    })
+
+                    root.showStatus("Proxy ✓ " + (ipData.ip || "") + " · Updating fingerprint...", true)
                 } else {
                     root.showStatus("Proxy test failed: " + (error || "Connection error"), false)
                 }
@@ -814,18 +837,25 @@ Item {
                                     enabled: !root.fpGenerating
                                     onClicked: {
                                         root.fpGenerating = true
+                                        // Use actual profileId if available (for determinism across sessions)
+                                        // Use timestamp-based ID only for brand-new unsaved profiles
+                                        var fpId = root.profileId || ("new_" + Date.now())
                                         ipcClient.send("generate_fp", {
-                                            profileId:  "rand_" + Date.now(),
-                                            osType:     ["windows10","windows11","linux"][osSelector.currentIndex],
-                                            randomize:  true,
-                                            ipData:     {
-                                                ip:          root.profile.ip_address,
-                                                countryCode: root.profile.ip_country_code,
-                                                timezone:    root.profile.ip_timezone,
-                                                lat:         root.profile.ip_lat,
-                                                lng:         root.profile.ip_lng,
+                                            profileId:           fpId,
+                                            osType:              ["windows10","windows11","linux"][osSelector.currentIndex],
+                                            randomize:           true,   // randomize GPU/screen/audio
+                                            hardwareConcurrency: parseInt(cpuCombo.currentText) || null,
+                                            deviceMemory:        parseInt(ramCombo.currentText) || null,
+                                            resolution:          null,   // fully random resolution
+                                            noiseLevel:          Math.round(noiseSlider.value),
+                                            ipData: {
+                                                ip:          root.profile.ip_address || "",
+                                                country:     root.profile.ip_country || "",
+                                                countryCode: root.profile.ip_country_code || "",
+                                                timezone:    root.profile.ip_timezone || "",
+                                                lat:         root.profile.ip_lat || 0,
+                                                lng:         root.profile.ip_lng || 0,
                                             },
-                                            noiseLevel: Math.round(noiseSlider.value),
                                         })
                                     }
                                 }

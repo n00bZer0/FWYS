@@ -6,72 +6,79 @@ const fp = __FWYS_FP__;
 const nav = fp.navigator || {};
 const hints = fp.clientHints || {};
 
-// ── Helper: define property with [native code] toString ─────────────────
-function defNative(obj, prop, get, set_) {
-  const desc = { enumerable: true, configurable: true };
-  if (get !== undefined) desc.get = get;
-  if (set_ !== undefined) desc.set = set_;
-  Object.defineProperty(obj, prop, desc);
-  // Make getter toString look native
-  if (desc.get) {
-    Object.defineProperty(desc.get, 'toString', {
-      value: () => `function get ${prop}() { [native code] }`,
-      configurable: true,
-    });
-  }
+// ── Helper: define accessor on Navigator.prototype with [native code] ────
+const navProto = (typeof Navigator !== 'undefined') ? Navigator.prototype : Object.getPrototypeOf(navigator);
+
+function defNavProto(prop, getter) {
+  try {
+    delete navigator[prop]; // Ensure navigator instance has NO own property shadowing the prototype
+  } catch (e) {}
+  if (!navProto) return;
+
+  const nativeGetter = function() {
+    if (!(this instanceof navProto.constructor) && this !== navProto) {
+      throw new TypeError("Illegal invocation");
+    }
+    return getter.call(this);
+  };
+  Object.defineProperty(nativeGetter, 'name', { value: `get ${prop}`, configurable: true });
+  Object.defineProperty(nativeGetter, 'toString', {
+    value: () => `function get ${prop}() { [native code] }`,
+    configurable: true,
+  });
+
+  Object.defineProperty(navProto, prop, {
+    get: nativeGetter,
+    set: undefined,
+    enumerable: true,
+    configurable: true,
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// P0 — navigator.webdriver (MOST CRITICAL)
-// Must be missing from own properties and not true on prototype
+// P0 — navigator.webdriver
+// Chromium launched with --disable-blink-features=AutomationControlled already
+// exposes a genuine C++ native getter on Navigator.prototype returning false.
+// We only ensure no own property exists on the navigator instance.
 // ─────────────────────────────────────────────────────────────────────────
-try {
-  delete Object.getPrototypeOf(navigator).webdriver;
-} catch (e) {}
-try {
-  delete navigator.webdriver;
-} catch (e) {}
-
-
-// ── navigator.platform ───────────────────────────────────────────────────
-if (nav.platform) defNative(navigator, 'platform', () => nav.platform);
-
-// ── navigator.hardwareConcurrency ───────────────────────────────────────
-if (nav.hardwareConcurrency)
-  defNative(navigator, 'hardwareConcurrency', () => nav.hardwareConcurrency);
-
-// ── navigator.deviceMemory ───────────────────────────────────────────────
-if (nav.deviceMemory)
-  defNative(navigator, 'deviceMemory', () => nav.deviceMemory);
-
-// ── navigator.maxTouchPoints (0 = desktop) ───────────────────────────────
-if (nav.maxTouchPoints !== undefined)
-  defNative(navigator, 'maxTouchPoints', () => nav.maxTouchPoints);
-
-// ── navigator.vendor ────────────────────────────────────────────────────
-defNative(navigator, 'vendor', () => nav.vendor || 'Google Inc.');
-
-// ── navigator.language + languages ──────────────────────────────────────
-if (nav.language) {
-  defNative(navigator, 'language',  () => nav.language);
-  defNative(navigator, 'languages', () => Object.freeze(nav.languages || [nav.language]));
+if (Object.prototype.hasOwnProperty.call(navigator, 'webdriver')) {
+  try {
+    delete navigator.webdriver;
+  } catch (e) {}
 }
 
-// ── navigator.cookieEnabled ──────────────────────────────────────────────
-defNative(navigator, 'cookieEnabled', () => true);
-
-// ── navigator.doNotTrack ─────────────────────────────────────────────────
-defNative(navigator, 'doNotTrack', () => null);
-
-// ── navigator.pdfViewerEnabled ───────────────────────────────────────────
-defNative(navigator, 'pdfViewerEnabled', () => true);
-
-// ── navigator.userAgent + appVersion ─────────────────────────────────────
-if (nav.userAgent) {
-  defNative(navigator, 'userAgent', () => nav.userAgent);
-  defNative(navigator, 'appVersion',
-    () => nav.userAgent.replace(/^Mozilla\//, ''));
+// ── Only hook properties if they differ from Chromium's native C++ values ──
+// Leaving native getters untouched ensures Function.prototype.toString returns
+// genuine "[native code]" across all iframes and worker realms!
+if (nav.platform && nav.platform !== navigator.platform) {
+  defNavProto('platform', () => nav.platform);
 }
+
+if (nav.hardwareConcurrency && nav.hardwareConcurrency !== navigator.hardwareConcurrency) {
+  defNavProto('hardwareConcurrency', () => nav.hardwareConcurrency);
+}
+
+if (nav.deviceMemory && nav.deviceMemory !== navigator.deviceMemory) {
+  defNavProto('deviceMemory', () => nav.deviceMemory);
+}
+
+if (nav.maxTouchPoints !== undefined && nav.maxTouchPoints !== navigator.maxTouchPoints) {
+  defNavProto('maxTouchPoints', () => nav.maxTouchPoints);
+}
+
+if (nav.vendor && nav.vendor !== navigator.vendor) {
+  defNavProto('vendor', () => nav.vendor);
+}
+
+if (nav.language && nav.language !== navigator.language) {
+  defNavProto('language',  () => nav.language);
+  defNavProto('languages', () => Object.freeze(nav.languages || [nav.language]));
+}
+
+// Ensure no stray own properties shadow prototype
+try { delete navigator.cookieEnabled; } catch (e) {}
+try { delete navigator.doNotTrack; } catch (e) {}
+try { delete navigator.pdfViewerEnabled; } catch (e) {}
 
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -79,9 +86,9 @@ if (nav.userAgent) {
 // Modern sites ALWAYS check this. Must match Sec-CH-UA headers exactly.
 // ─────────────────────────────────────────────────────────────────────────
 const uaDataBrands = hints.brands || [
-  { brand: 'Google Chrome',  version: '131' },
-  { brand: 'Chromium',       version: '131' },
-  { brand: 'Not?A_Brand',    version: '99'  },
+  { brand: 'Google Chrome',  version: '132' },
+  { brand: 'Not_A Brand',    version: '8'   },
+  { brand: 'Chromium',       version: '132' },
 ];
 const uaDataPlatform = hints.platform || 'Windows';
 const uaDataMobile   = hints.mobile   || false;
@@ -106,7 +113,7 @@ const uaDataObj = {
       bitness:           fp.clientHints?.bitness            || '64',
       model:             fp.clientHints?.model              || '',
       fullVersionList,
-      uaFullVersion:     fp.browser?.fullVersion            || '131.0.0.0',
+      uaFullVersion:     fp.browser?.fullVersion            || '132.0.6834.160',
       wow64:             fp.clientHints?.wow64              || false,
     };
 
@@ -132,43 +139,14 @@ Object.defineProperty(uaDataObj.getHighEntropyValues, 'toString', {
   configurable: true,
 });
 
-defNative(navigator, 'userAgentData', () => uaDataObj);
-
-// ─────────────────────────────────────────────────────────────────────────
-// P1 — Timezone override via Intl
-// Sites fingerprint via new Date().getTimezoneOffset() and Intl.DateTimeFormat
-// ─────────────────────────────────────────────────────────────────────────
-const profileTimezone = fp.timezone || 'America/New_York';
-const profileLocale   = fp.locale   || 'en-US';
-
-// Calculate offset from timezone name
-// We pre-calculate this from the IP data and store in fp.timezoneOffset
-// Fallback: let Intl handle it by resolving timezone name
-const origDateTimeFormat = Intl.DateTimeFormat;
-Intl.DateTimeFormat = function(locale, opts) {
-  if (!opts) opts = {};
-  if (!opts.timeZone) opts.timeZone = profileTimezone;
-  const resolvedLocale = locale || profileLocale;
-  return new origDateTimeFormat(resolvedLocale, opts);
-};
-Intl.DateTimeFormat.prototype        = origDateTimeFormat.prototype;
-Intl.DateTimeFormat.supportedLocalesOf = origDateTimeFormat.supportedLocalesOf;
-Object.defineProperty(Intl.DateTimeFormat, 'toString', {
-  value: () => 'function DateTimeFormat() { [native code] }',
-  configurable: true,
-});
-
-// Override Date.prototype.getTimezoneOffset
-if (fp.timezoneOffset !== undefined) {
-  const origGetTimezoneOffset = Date.prototype.getTimezoneOffset;
-  Date.prototype.getTimezoneOffset = function() {
-    return fp.timezoneOffset;
-  };
-  Object.defineProperty(Date.prototype.getTimezoneOffset, 'toString', {
-    value: () => 'function getTimezoneOffset() { [native code] }',
-    configurable: true,
-  });
+if (!navigator.userAgentData) {
+  defNavProto('userAgentData', () => uaDataObj);
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Timezone: Handled natively at Chromium ICU level via CDP page.emulateTimezone
+// No userland JS hooks on Date or Intl to prevent DST transition contradictions!
+// ─────────────────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────────────────
 // P0 — window.chrome object

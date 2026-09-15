@@ -135,32 +135,17 @@ except Exception as e:
     }
 }
 
-// ─── Language mapping ──────────────────────────────────────────────────────
-
-const COUNTRY_LANGUAGE = {
-    US: ['en-US', 'en'],     GB: ['en-GB', 'en'],
-    DE: ['de-DE', 'de'],     FR: ['fr-FR', 'fr'],
-    JP: ['ja-JP', 'ja'],     CN: ['zh-CN', 'zh'],
-    KR: ['ko-KR', 'ko'],     RU: ['ru-RU', 'ru'],
-    BR: ['pt-BR', 'pt'],     ES: ['es-ES', 'es'],
-    IT: ['it-IT', 'it'],     NL: ['nl-NL', 'nl'],
-    PL: ['pl-PL', 'pl'],     IN: ['en-IN', 'en'],
-    TR: ['tr-TR', 'tr'],     ID: ['id-ID', 'id'],
-    TH: ['th-TH', 'th'],     VN: ['vi-VN', 'vi'],
-    UA: ['uk-UA', 'uk'],     SE: ['sv-SE', 'sv'],
-    NO: ['nb-NO', 'nb'],     DK: ['da-DK', 'da'],
-    FI: ['fi-FI', 'fi'],     PT: ['pt-PT', 'pt'],
-    AU: ['en-AU', 'en'],     CA: ['en-CA', 'en'],
-    MX: ['es-MX', 'es'],     AR: ['es-AR', 'es'],
-};
-
-function getLanguages(countryCode) {
-    return COUNTRY_LANGUAGE[countryCode?.toUpperCase()] || ['en-US', 'en'];
-}
+// ─── Language, Speech Voice & Font mapping (195+ countries) ───────────────
+const {
+    getLanguages,
+    getSpeechVoices,
+    getRegionalFonts,
+} = require('./countryData');
 
 // ─── GPU profiles (realistic combos) ──────────────────────────────────────
 
 const GPU_PROFILES = [
+    { vendor: 'Google Inc. (AMD)',    renderer: 'ANGLE (AMD, AMD Radeon(TM) Graphics (0x00001638) Direct3D11 vs_5_0 ps_5_0, D3D11)' },
     { vendor: 'Google Inc. (Intel)',  renderer: 'ANGLE (Intel, Intel UHD Graphics 620 Direct3D11 vs_5_0 ps_5_0, D3D11)' },
     { vendor: 'Google Inc. (Intel)',  renderer: 'ANGLE (Intel, Intel HD Graphics 630 Direct3D11 vs_5_0 ps_5_0, D3D11)' },
     { vendor: 'Google Inc. (NVIDIA)', renderer: 'ANGLE (NVIDIA, NVIDIA GeForce GTX 1650 Direct3D11 vs_5_0 ps_5_0, D3D11)' },
@@ -190,17 +175,17 @@ function pseudoRandom(seed, max) {
  *   hardwareConcurrency — 2|4|8|16 or null for random
  *   deviceMemory    — 2|4|8|16 or null
  *   profileId       — used as seed for deterministic random
- *   noiseLevel      — 1|2|3 (canvas/audio noise level)
+ *   noiseLevel      — 0|1|2|3 (canvas/audio noise level, 0=clean native)
  */
 function generateFingerprint(options = {}) {
     const {
         osType          = 'windows10',
-        resolution      = null,
+        resolution      = '1920x1080',
         ipData          = {},
         hardwareConcurrency = null,
         deviceMemory    = null,
         profileId       = 'default',
-        noiseLevel      = 2,
+        noiseLevel      = 0,
     } = options;
 
     const os = OS_DATA[osType] || OS_DATA.windows10;
@@ -209,39 +194,45 @@ function generateFingerprint(options = {}) {
         ? (profileId + '_' + Date.now() + '_' + Math.floor(Math.random() * 100000))
         : (profileId || 'default');
 
-    // ── Browser version (Chrome latest) ──
-    const chromeVersion = '131.0.0.0';
-    const chromeMinor   = '131';
+    // ── Browser version (Chrome 153 matching system Chrome) ──
+    const chromeVersion = '153.0.8010.36';
+    const chromeMinor   = '153';
     const userAgent = `Mozilla/5.0 (${os.uaPlatform}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVersion} Safari/537.36`;
 
-    // ── Screen ──
-    const resKeys = Object.keys(SCREEN_RESOLUTIONS);
-    const resKey = (isRandom ? null : resolution) || resKeys[pseudoRandom(seed + 'res', resKeys.length)];
+    // ── Hardware ──
+    // Match physical host cores and RAM to prevent Worker vs Window divergence
+    // and "machine delivers more parallelism than it claims cores" contradictions
+    const osModule = require('os');
+    const hostCpus = (osModule.cpus && osModule.cpus() && osModule.cpus().length) ? osModule.cpus().length : 12;
+    const hostRam  = Math.round(osModule.totalmem() / (1024 * 1024 * 1024));
+    const cpu = hardwareConcurrency || hostCpus;
+    const ram = deviceMemory        || (hostRam >= 24 ? 32 : (hostRam >= 16 ? 16 : 8));
+
+    // Screen — default to 1920x1080 to match physical display and avoid getter tampering
+    const resKey = resolution || '1920x1080';
     const screen = SCREEN_RESOLUTIONS[resKey] || SCREEN_RESOLUTIONS['1920x1080'];
     const dpr = osType === 'windows11' ? 1.25 : 1.0;
 
-    // Window = viewport (smaller than screen)
+    // Window = viewport (slightly smaller than screen, realistic)
     const innerWidth  = Math.floor(screen.width  * 0.78);
     const innerHeight = Math.floor(screen.height * 0.80);
 
-    // ── Hardware ──
-    const cpuOptions = [2, 4, 6, 8, 12, 16];
-    const ramOptions = [2, 4, 8, 16];
-    const cpu = (isRandom ? null : hardwareConcurrency) || cpuOptions[pseudoRandom(seed + 'cpu', cpuOptions.length)];
-    const ram = (isRandom ? null : deviceMemory)        || ramOptions[pseudoRandom(seed + 'ram', ramOptions.length)];
-
-    // ── GPU ──
-    const gpuProfile = GPU_PROFILES[pseudoRandom(seed + 'gpu', GPU_PROFILES.length)];
+    // ── GPU (default to host AMD Radeon GPU for 100% Worker OffscreenCanvas match) ──
+    const gpuProfile = options.gpu || GPU_PROFILES[0];
 
     // ── Geo / Language (IP-first) ──
-    const countryCode = ipData.countryCode || 'US';
+    const countryCode = (ipData.countryCode || ipData.country || 'US').toUpperCase();
     const languages   = getLanguages(countryCode);
     const timezone    = ipData.timezone || 'America/New_York';
     const geoLat      = ipData.lat || 40.7128;
     const geoLng      = ipData.lng || -74.0060;
 
-    // ── Fonts ──
-    const fontList = [...os.fonts];
+    // ── Fonts (Base OS + Country-specific regional fonts) ──
+    const regionalFonts = getRegionalFonts(countryCode);
+    const fontList = Array.from(new Set([...os.fonts, ...regionalFonts]));
+
+    // ── Speech Voices (Matched to Country & OS) ──
+    const speechVoices = getSpeechVoices(countryCode, os);
 
     // ── WebGL params (consistent with GPU) ──
     const glParams = {
@@ -320,7 +311,7 @@ function generateFingerprint(options = {}) {
             renderer: gpuProfile.renderer,
         },
         canvas: {
-            seed:       parseInt(seed.replace(/[^0-9]/g, '').slice(0, 9)) || 12345678,
+            seed:       pseudoRandom(seed + 'cvs', 0x7FFFFFFF) + 1,   // 1..2147483647
             noiseLevel,     // 1=subtle 2=normal 3=strong
             noiseType: 'pixel',
         },
@@ -363,7 +354,7 @@ function generateFingerprint(options = {}) {
             ],
         },
         audio: {
-            seed:               parseInt(seed.replace(/[^0-9]/g, '').slice(1, 10)) || 87654321,
+            seed:               pseudoRandom(seed + 'aud', 0x7FFFFFFF) + 1,
             sampleRate:         44100,
             channelCount:       2,
             maxChannelCount:    2,
@@ -372,7 +363,7 @@ function generateFingerprint(options = {}) {
             outputLatency:      0.012,
         },
         audioContext: {
-            seed:               parseInt(seed.replace(/[^0-9]/g, '').slice(1, 10)) || 87654321,
+            seed:               pseudoRandom(seed + 'actx', 0x7FFFFFFF) + 1,
             sampleRate:         44100,
             noiseLevel,
         },
@@ -393,18 +384,18 @@ function generateFingerprint(options = {}) {
         timezone,
         locale:   languages[0],
         speech: {
-            voices: os.speechVoices,
+            voices: speechVoices,
         },
         network: {
             connectionType: connType,
             downlink:       10 + pseudoRandom(seed + 'dl', 90),
-            rtt:            20  + pseudoRandom(seed + 'rtt', 80),
+            rtt:            25 * (1 + pseudoRandom(seed + 'rtt', 4)), // 25ms steps: 25, 50, 75, 100
             saveData:       false,
         },
         battery: {
             charging:        batteryLevel === 1.0,
             chargingTime:    batteryLevel === 1.0 ? 0 : Infinity,
-            dischargingTime: Math.floor(3600 + pseudoRandom(seed + 'dis', 7200)),
+            dischargingTime: batteryLevel === 1.0 ? Infinity : Math.floor(3600 + pseudoRandom(seed + 'dis', 7200)),
             level:           batteryLevel,
         },
         plugins: [
@@ -436,8 +427,8 @@ function generateFingerprint(options = {}) {
         clientHints: {
             brands: [
                 { brand: 'Google Chrome',       version: chromeMinor },
-                { brand: 'Chromium',             version: chromeMinor },
-                { brand: 'Not?A_Brand',          version: '99' },
+                { brand: 'Not_A Brand',         version: '8' },
+                { brand: 'Chromium',            version: chromeMinor },
             ],
             mobile:          false,
             platform:        osType.startsWith('windows') ? 'Windows' : 'Linux',
@@ -449,14 +440,29 @@ function generateFingerprint(options = {}) {
         headers: {
             'User-Agent':            userAgent,
             'Accept-Language':       languages.join(',') + ';q=0.9',
-            'Sec-Ch-Ua':             `"Google Chrome";v="${chromeMinor}", "Chromium";v="${chromeMinor}", "Not?A_Brand";v="99"`,
-            'Sec-Ch-Ua-Mobile':      '?0',
-            'Sec-Ch-Ua-Platform':    osType.startsWith('windows') ? '"Windows"' : '"Linux"',
-            'Sec-Ch-Ua-Platform-Version': osType === 'windows11' ? '"14.0.0"' : '"10.0.0"',
-            'Sec-Ch-Ua-Arch':        '"x86"',
-            'Sec-Ch-Ua-Bitness':     '"64"',
-            'Sec-Ch-Ua-Full-Version-List': `"Google Chrome";v="${chromeVersion}", "Chromium";v="${chromeVersion}", "Not?A_Brand";v="99.0.0.0"`,
+            'Sec-CH-UA':             `"Google Chrome";v="${chromeMinor}", "Not_A Brand";v="8", "Chromium";v="${chromeMinor}"`,
+            'Sec-CH-UA-Mobile':      '?0',
+            'Sec-CH-UA-Platform':    osType.startsWith('windows') ? '"Windows"' : '"Linux"',
+            'Sec-CH-UA-Platform-Version': osType === 'windows11' ? '"14.0.0"' : '"10.0.0"',
+            'Sec-CH-UA-Arch':        '"x86"',
+            'Sec-CH-UA-Bitness':     '"64"',
+            'Sec-CH-UA-Full-Version-List': `"Google Chrome";v="${chromeVersion}", "Not_A Brand";v="8.0.0.0", "Chromium";v="${chromeVersion}"`,
+            'Device-Memory':         `${ram}`,
+            'Sec-CH-Device-Memory':  `${ram}`,
+            'DPR':                   `${dpr}`,
+            'Sec-CH-DPR':            `${dpr}`,
+            'Viewport-Width':        `${innerWidth}`,
+            'Sec-CH-Viewport-Width': `${innerWidth}`,
+            'Sec-CH-Viewport-Height':`${innerHeight}`,
+            'RTT':                   '50',
+            'Downlink':              '1.75',
+            'ECT':                   '4g',
         },
+        webrtc: {
+            mode:     'filter_local',
+            publicIp: ipData.ip || '',
+        },
+        publicIp: ipData.ip || '',
         meta: {
             generatedAt:     new Date().toISOString(),
             generationMode:  'auto',
@@ -473,6 +479,7 @@ function generateFingerprint(options = {}) {
     fp.languages           = fp.navigator.languages;
     fp.hardwareConcurrency = fp.navigator.hardwareConcurrency;
     fp.deviceMemory        = fp.navigator.deviceMemory;
+    fp.publicIp            = fp.meta.ipSource;
 
     return fp;
 }

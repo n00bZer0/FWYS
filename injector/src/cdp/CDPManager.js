@@ -89,10 +89,43 @@ class CDPManager {
         // Evaluate stealth script before any page scripts load
         await page.evaluateOnNewDocument(stealthScript);
 
-        // Emulate User-Agent
+        // Emulate User-Agent with full Client Hints metadata
         const userAgent = fp.navigator?.userAgent || fp.user_agent;
+        const chromeMinor = fp.browser?.version || '153';
+        const chromeFull = fp.browser?.fullVersion || '153.0.8010.36';
+        const brands = fp.clientHints?.brands || [
+          { brand: 'Google Chrome', version: chromeMinor },
+          { brand: 'Not_A Brand',   version: '8' },
+          { brand: 'Chromium',      version: chromeMinor },
+        ];
+
+        const userAgentMetadata = {
+          brands,
+          fullVersion: chromeFull,
+          platform: fp.clientHints?.platform || 'Windows',
+          platformVersion: fp.clientHints?.platformVersion || '10.0.0',
+          architecture: fp.clientHints?.architecture || 'x86',
+          model: '',
+          mobile: false,
+          bitness: fp.clientHints?.bitness || '64',
+          wow64: false,
+        };
+
         if (userAgent) {
-          await page.setUserAgent(userAgent);
+          await page.setUserAgent(userAgent, userAgentMetadata).catch(() => {});
+        }
+
+        // Direct CDP session override for maximum consistency
+        try {
+          const client = await page.target().createCDPSession();
+          await client.send('Network.setUserAgentOverride', {
+            userAgent: userAgent || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.8010.36 Safari/537.36',
+            acceptLanguage: (fp.navigator?.languages || ['en-US', 'en']).join(','),
+            platform: 'Win32',
+            userAgentMetadata,
+          });
+        } catch (e) {
+          // session may already exist or fail on some targets
         }
 
         // Emulate Timezone
@@ -110,10 +143,32 @@ class CDPManager {
           }).catch(() => {});
         }
 
-        // Extra HTTP headers (Sec-CH-UA, etc.)
-        if (fp.headers && Object.keys(fp.headers).length) {
-          await page.setExtraHTTPHeaders(fp.headers).catch(() => {});
-        }
+        // Build complete Client Hints & HTTP headers
+        const ram = String(fp.navigator?.deviceMemory || 8);
+        const dpr = String(fp.screen?.devicePixelRatio || 1);
+        const vpW = String(fp.window?.innerWidth || fp.screen?.width || 1920);
+        const vpH = String(fp.window?.innerHeight || fp.screen?.height || 1080);
+        const extraHeaders = Object.assign({
+          'Sec-CH-UA':             `"Google Chrome";v="${chromeMinor}", "Not_A Brand";v="8", "Chromium";v="${chromeMinor}"`,
+          'Sec-CH-UA-Mobile':      '?0',
+          'Sec-CH-UA-Platform':    '"Windows"',
+          'Sec-CH-UA-Platform-Version': '"10.0.0"',
+          'Sec-CH-UA-Arch':        '"x86"',
+          'Sec-CH-UA-Bitness':     '"64"',
+          'Sec-CH-UA-Full-Version-List': `"Google Chrome";v="${chromeFull}", "Not_A Brand";v="8.0.0.0", "Chromium";v="${chromeFull}"`,
+          'Device-Memory':         ram,
+          'Sec-CH-Device-Memory':  ram,
+          'DPR':                   dpr,
+          'Sec-CH-DPR':            dpr,
+          'Viewport-Width':        vpW,
+          'Sec-CH-Viewport-Width': vpW,
+          'Sec-CH-Viewport-Height':vpH,
+          'RTT':                   String(fp.network?.rtt || 50),
+          'Downlink':              '1.75',
+          'ECT':                   '4g',
+        }, fp.headers || {});
+
+        await page.setExtraHTTPHeaders(extraHeaders).catch(() => {});
       } catch (err) {
         // Page may have closed or navigated
       }
@@ -135,13 +190,30 @@ class CDPManager {
       }
     }
 
-    // Automatically apply to any newly created tab/window
+    // Apply stealth script to worker targets (dedicated, shared, service workers)
+    const applyToWorker = async (target) => {
+      try {
+        const session = await target.createCDPSession();
+        await session.send('Runtime.enable');
+        await session.send('Runtime.evaluate', {
+          expression: stealthScript,
+          returnByValue: true,
+        });
+      } catch (err) {
+        // worker may have finished or already attached
+      }
+    };
+
+    // Automatically apply to any newly created tab/window or worker target
     this.browser.on('targetcreated', async (target) => {
-      if (target.type() === 'page') {
+      const type = target.type();
+      if (type === 'page') {
         const newPage = await target.page();
         if (newPage) {
           await applyToPage(newPage);
         }
+      } else if (['service_worker', 'shared_worker', 'other', 'worker'].includes(type)) {
+        await applyToWorker(target);
       }
     });
 

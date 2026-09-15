@@ -17,18 +17,17 @@ const SCRIPTS_DIR = path.join(__dirname, 'scripts');
 
 // Ordered list — navigator FIRST (critical), then others
 const SCRIPT_ORDER = [
-  'navigator.js',           // P0: webdriver, platform, userAgentData, timezone, chrome object
+  'navigator.js',           // P0: webdriver, platform, userAgentData, chrome object
+  'screen.js',              // P0: window.screen, devicePixelRatio
   'plugins.js',             // P0: plugins + mimeTypes
-  'permissions.js',         // P0: permissions API
-  'canvas.js',              // P1: canvas noise (toDataURL + getImageData + toBlob)
-  'audio.js',               // P1: AudioContext.prototype + AudioBuffer + AnalyserNode noise
-  'webgl.js',               // P1: WebGL UNMASKED vendor/renderer
-  'fonts.js',               // P1: measureText noise + document.fonts.check()
+  'canvas.js',              // P1: canvas coordinate noise
+  'audio.js',               // P1: deterministic audio noise
+  'webgl.js',               // P1: WebGL & WebGPU UNMASKED vendor/renderer
+  'fonts.js',               // P1: document.fonts.check()
   'webrtc.js',              // P0: WebRTC IP leak block
-  'battery.js',             // P2: getBattery()
+  'battery.js',             // P2: getBattery() with W3C invariants
   'speech.js',              // P2: speechSynthesis.getVoices()
-  'network_info.js',        // P3: navigator.connection
-  'performance_timing.js',  // P3: performance.now() jitter
+  'network_info.js',        // P3: navigator.connection with 25ms RTT quantization
 ];
 
 
@@ -104,10 +103,10 @@ ${code.split('\n').map(l => '    ' + l).join('\n')}
                                     : fp.navigator.maxTouchPoints;
     }
     if (fp.canvas) {
-      norm.canvas_seed = norm.canvas_seed || fp.canvas.noiseLevel;
+      norm.canvas_seed = norm.canvas_seed || fp.canvas.seed || fp.canvas.noiseLevel;
     }
     if (fp.audio) {
-      norm.audio_seed = norm.audio_seed || fp.audio.noiseLevel;
+      norm.audio_seed = norm.audio_seed || fp.audio.seed || fp.audio.noiseLevel;
     }
 
     // Add timezone offset (minutes west of UTC) for Date.getTimezoneOffset()

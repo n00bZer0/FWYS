@@ -119,6 +119,12 @@ function buildPluginsAndMimes() {
 }
 
 try {
+  if (typeof navigator !== 'undefined' && navigator.plugins && navigator.plugins.length >= 5) {
+    // Chromium already has the standard 5 PDF plugins implemented as native C++ IDL collection.
+    // Preserving native PluginArray ensures unsigned-long wraparound and structuredClone integrity.
+    return;
+  }
+
   const { plugins, mimeTypes } = buildPluginsAndMimes();
 
   Object.defineProperty(navigator, 'plugins', {

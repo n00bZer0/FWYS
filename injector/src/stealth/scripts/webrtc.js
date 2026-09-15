@@ -1,66 +1,210 @@
 // FWYS Stealth — webrtc.js
-// Filters WebRTC ICE candidates to prevent IP leakage
+// WebRTC leak protection & Proxy IP spoofing
+// Mode: 'allow' | 'filter_local' | 'block'
 
 const fp = __FWYS_FP__;
-const webrtcMode = fp.webrtc_mode || 'filter_local'; // 'allow', 'filter_local', 'block'
+const webrtcMode = fp.webrtc_mode || fp.webrtc?.mode || 'filter_local';
+const proxyPublicIp = fp.publicIp || fp.webrtc?.publicIp || fp.meta?.ipSource || (fp.geo && fp.geo.ip) || '';
 
 if (webrtcMode === 'allow') return;
 
+if (webrtcMode === 'block') {
+  const fakeRTC = function() {
+    throw new DOMException('WebRTC is disabled by profile settings.', 'NotAllowedError');
+  };
+  fakeRTC.prototype = window.RTCPeerConnection?.prototype || {};
+  Object.defineProperty(fakeRTC, 'toString', {
+    value: () => 'function RTCPeerConnection() { [native code] }',
+    configurable: true,
+  });
+  window.RTCPeerConnection = fakeRTC;
+  return;
+}
+
+// IPv4 private / loopback / link-local
+const PRIVATE_RE = [
+  /^10\.\d+\.\d+\.\d+$/,
+  /^172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+$/,
+  /^192\.168\.\d+\.\d+$/,
+  /^169\.254\.\d+\.\d+$/,
+  /^127\.\d+\.\d+\.\d+$/,
+];
+
 const isPrivateIP = (ip) => {
   if (!ip) return false;
-  // IPv4 private ranges
-  if (/^10\.\d+\.\d+\.\d+$/.test(ip)) return true;
-  if (/^172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+$/.test(ip)) return true;
-  if (/^192\.168\.\d+\.\d+$/.test(ip)) return true;
-  if (/^169\.254\.\d+\.\d+$/.test(ip)) return true;
-  if (/^127\.\d+\.\d+\.\d+$/.test(ip)) return true;
-  // IPv6 loopback/link-local
   if (ip === '::1') return true;
   if (/^fe80::/i.test(ip)) return true;
-  // mDNS
-  if (ip.endsWith('.local')) return true;
-  return false;
+  return PRIVATE_RE.some(re => re.test(ip));
 };
 
 const extractIP = (candidate) => {
-  // Format: "candidate:... IP port ..."
+  if (!candidate) return null;
   const parts = candidate.split(' ');
-  return parts[4] || null; // 5th field is the IP
+  return parts[4] || null;
 };
 
-// Patch RTCPeerConnection
+const isMdns = (ip) => ip && ip.endsWith('.local');
+
 const origRTC = window.RTCPeerConnection;
 if (!origRTC) return;
 
 function PatchedRTCPeerConnection(config, constraints) {
-  const pc = new origRTC(config, constraints);
+  const pc = new origRTC(config || {}, constraints);
+  let hasEmittedPublic = false;
+  let customOnIceCandidate = null;
+  const iceListeners = new Set();
 
-  const origAddIceCandidate = pc.addIceCandidate.bind(pc);
-  const origOnIceCandidate = Object.getOwnPropertyDescriptor(
-    RTCPeerConnection.prototype, 'onicecandidate'
-  );
+  const sanitizeCandidate = (origCand) => {
+    if (!origCand || !origCand.candidate) return origCand;
+    let candStr = origCand.candidate;
+    const ip = extractIP(candStr);
 
-  pc.addEventListener('icecandidate', (e) => {
-    if (!e.candidate) return;
-    const candidateStr = e.candidate.candidate;
-    const ip = extractIP(candidateStr);
+    if (isMdns(ip)) {
+      // If we have a proxy public IP, we can also upgrade mDNS/srflx to proxy IP
+      return origCand;
+    }
 
-    if (webrtcMode === 'block') {
-      // Block ALL candidates (disables WebRTC data channels effectively)
-      e.stopImmediatePropagation();
+    if (isPrivateIP(ip)) {
+      if (proxyPublicIp) {
+        // Replace private IP with proxy public IP so it doesn't leak and shows exit IP
+        candStr = candStr.replace(ip, proxyPublicIp);
+        hasEmittedPublic = true;
+        try {
+          return new RTCIceCandidate({
+            candidate: candStr,
+            sdpMid: origCand.sdpMid,
+            sdpMLineIndex: origCand.sdpMLineIndex,
+            usernameFragment: origCand.usernameFragment,
+          });
+        } catch (e) {
+          return origCand;
+        }
+      }
+      // If no proxy IP, drop private candidate
+      return null;
+    }
+
+    if (proxyPublicIp && ip && ip !== proxyPublicIp) {
+      // Replace non-matching public IP (e.g. real ISP IP leaked via STUN) with proxy exit IP!
+      candStr = candStr.replace(ip, proxyPublicIp);
+      hasEmittedPublic = true;
+      try {
+        return new RTCIceCandidate({
+          candidate: candStr,
+          sdpMid: origCand.sdpMid,
+          sdpMLineIndex: origCand.sdpMLineIndex,
+          usernameFragment: origCand.usernameFragment,
+        });
+      } catch (e) {
+        return origCand;
+      }
+    }
+
+    if (ip === proxyPublicIp) {
+      hasEmittedPublic = true;
+    }
+    return origCand;
+  };
+
+  const dispatchToHandlers = (event) => {
+    if (typeof customOnIceCandidate === 'function') {
+      try { customOnIceCandidate.call(pc, event); } catch (e) {}
+    }
+    for (const listener of iceListeners) {
+      try { listener.call(pc, event); } catch (e) {}
+    }
+  };
+
+  // Intercept native icecandidate event
+  origRTC.prototype.addEventListener.call(pc, 'icecandidate', (e) => {
+    e.stopImmediatePropagation();
+
+    if (!e.candidate) {
+      // Candidate gathering finished
+      if (proxyPublicIp && !hasEmittedPublic) {
+        hasEmittedPublic = true;
+        // Synthesize proxy public IP candidate for browserleaks / iphey
+        const fakeCandidateStr = `candidate:1 1 UDP 2122260223 ${proxyPublicIp} 54321 typ srflx raddr 0.0.0.0 rport 0 generation 0`;
+        let fakeCand = null;
+        try {
+          fakeCand = new RTCIceCandidate({
+            candidate: fakeCandidateStr,
+            sdpMid: '0',
+            sdpMLineIndex: 0,
+          });
+        } catch (err) {
+          fakeCand = { candidate: fakeCandidateStr, sdpMid: '0', sdpMLineIndex: 0 };
+        }
+        dispatchToHandlers(new RTCPeerConnectionIceEvent('icecandidate', { candidate: fakeCand }));
+      }
+      dispatchToHandlers(new RTCPeerConnectionIceEvent('icecandidate', { candidate: null }));
       return;
     }
 
-    if (webrtcMode === 'filter_local' && isPrivateIP(ip)) {
-      e.stopImmediatePropagation();
-      return;
+    const cleanCandidate = sanitizeCandidate(e.candidate);
+    if (cleanCandidate) {
+      dispatchToHandlers(new RTCPeerConnectionIceEvent('icecandidate', { candidate: cleanCandidate }));
     }
   }, true);
+
+  // Property setter/getter for pc.onicecandidate
+  Object.defineProperty(pc, 'onicecandidate', {
+    get: () => customOnIceCandidate,
+    set: (fn) => {
+      customOnIceCandidate = fn;
+    },
+    enumerable: true,
+    configurable: true,
+  });
+
+  // addEventListener for 'icecandidate'
+  const origAddEventListener = pc.addEventListener;
+  pc.addEventListener = function(type, listener, options) {
+    if (type === 'icecandidate') {
+      if (typeof listener === 'function') iceListeners.add(listener);
+      return;
+    }
+    return origAddEventListener.call(this, type, listener, options);
+  };
+
+  const origRemoveEventListener = pc.removeEventListener;
+  pc.removeEventListener = function(type, listener, options) {
+    if (type === 'icecandidate') {
+      iceListeners.delete(listener);
+      return;
+    }
+    return origRemoveEventListener.call(this, type, listener, options);
+  };
+
+  // Fallback timer when setLocalDescription is called, in case proxy doesn't route UDP at all
+  const origSetLocalDescription = pc.setLocalDescription;
+  pc.setLocalDescription = function(desc) {
+    if (proxyPublicIp) {
+      setTimeout(() => {
+        if (!hasEmittedPublic) {
+          hasEmittedPublic = true;
+          const fakeCandidateStr = `candidate:1 1 UDP 2122260223 ${proxyPublicIp} 54321 typ srflx raddr 0.0.0.0 rport 0 generation 0`;
+          let fakeCand = null;
+          try {
+            fakeCand = new RTCIceCandidate({
+              candidate: fakeCandidateStr,
+              sdpMid: '0',
+              sdpMLineIndex: 0,
+            });
+          } catch (err) {
+            fakeCand = { candidate: fakeCandidateStr, sdpMid: '0', sdpMLineIndex: 0 };
+          }
+          dispatchToHandlers(new RTCPeerConnectionIceEvent('icecandidate', { candidate: fakeCand }));
+        }
+      }, 150);
+    }
+    return origSetLocalDescription.apply(this, arguments);
+  };
 
   return pc;
 }
 
-// Copy prototype
+Object.setPrototypeOf(PatchedRTCPeerConnection, origRTC);
 PatchedRTCPeerConnection.prototype = origRTC.prototype;
 Object.defineProperty(PatchedRTCPeerConnection.prototype, 'constructor', {
   value: PatchedRTCPeerConnection,
@@ -68,7 +212,8 @@ Object.defineProperty(PatchedRTCPeerConnection.prototype, 'constructor', {
   configurable: true,
 });
 
-// Replace global
 window.RTCPeerConnection = PatchedRTCPeerConnection;
-PatchedRTCPeerConnection.toString = () =>
-  'function RTCPeerConnection() { [native code] }';
+Object.defineProperty(PatchedRTCPeerConnection, 'toString', {
+  value: () => 'function RTCPeerConnection() { [native code] }',
+  configurable: true,
+});
