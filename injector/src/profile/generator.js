@@ -144,14 +144,23 @@ const {
 
 // ─── GPU profiles (realistic combos) ──────────────────────────────────────
 
+// ─── GPU profiles (realistic combos) ──────────────────────────────────────
+
 const GPU_PROFILES = [
-    { vendor: 'Google Inc. (AMD)',    renderer: 'ANGLE (AMD, AMD Radeon(TM) Graphics (0x00001638) Direct3D11 vs_5_0 ps_5_0, D3D11)' },
-    { vendor: 'Google Inc. (Intel)',  renderer: 'ANGLE (Intel, Intel UHD Graphics 620 Direct3D11 vs_5_0 ps_5_0, D3D11)' },
-    { vendor: 'Google Inc. (Intel)',  renderer: 'ANGLE (Intel, Intel HD Graphics 630 Direct3D11 vs_5_0 ps_5_0, D3D11)' },
-    { vendor: 'Google Inc. (NVIDIA)', renderer: 'ANGLE (NVIDIA, NVIDIA GeForce GTX 1650 Direct3D11 vs_5_0 ps_5_0, D3D11)' },
     { vendor: 'Google Inc. (NVIDIA)', renderer: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)' },
+    { vendor: 'Google Inc. (NVIDIA)', renderer: 'ANGLE (NVIDIA, NVIDIA GeForce GTX 1650 Direct3D11 vs_5_0 ps_5_0, D3D11)' },
+    { vendor: 'Google Inc. (NVIDIA)', renderer: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 4070 Direct3D11 vs_5_0 ps_5_0, D3D11)' },
+    { vendor: 'Google Inc. (NVIDIA)', renderer: 'ANGLE (NVIDIA, NVIDIA GeForce RTX 2060 Direct3D11 vs_5_0 ps_5_0, D3D11)' },
+    { vendor: 'Google Inc. (AMD)',    renderer: 'ANGLE (AMD, AMD Radeon(TM) Graphics (0x00001638) Direct3D11 vs_5_0 ps_5_0, D3D11)' },
     { vendor: 'Google Inc. (AMD)',    renderer: 'ANGLE (AMD, AMD Radeon RX 580 Direct3D11 vs_5_0 ps_5_0, D3D11)' },
+    { vendor: 'Google Inc. (AMD)',    renderer: 'ANGLE (AMD, AMD Radeon RX 6700 XT Direct3D11 vs_5_0 ps_5_0, D3D11)' },
     { vendor: 'Google Inc. (Intel)',  renderer: 'ANGLE (Intel, Intel Iris Xe Graphics Direct3D11 vs_5_0 ps_5_0, D3D11)' },
+    { vendor: 'Google Inc. (Intel)',  renderer: 'ANGLE (Intel, Intel UHD Graphics 630 Direct3D11 vs_5_0 ps_5_0, D3D11)' },
+    { vendor: 'Google Inc. (Intel)',  renderer: 'ANGLE (Intel, Intel UHD Graphics 620 Direct3D11 vs_5_0 ps_5_0, D3D11)' },
+];
+
+const RESOLUTION_CHOICES = [
+    '1920x1080', '1920x1080', '1920x1080', '2560x1440', '1440x900', '1366x768', '1280x720'
 ];
 
 function pseudoRandom(seed, max) {
@@ -180,7 +189,7 @@ function pseudoRandom(seed, max) {
 function generateFingerprint(options = {}) {
     const {
         osType          = 'windows10',
-        resolution      = '1920x1080',
+        resolution      = null,
         ipData          = {},
         hardwareConcurrency = null,
         deviceMemory    = null,
@@ -200,25 +209,70 @@ function generateFingerprint(options = {}) {
     const userAgent = `Mozilla/5.0 (${os.uaPlatform}) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${chromeVersion} Safari/537.36`;
 
     // ── Hardware ──
-    // Match physical host cores and RAM to prevent Worker vs Window divergence
-    // and "machine delivers more parallelism than it claims cores" contradictions
     const osModule = require('os');
     const hostCpus = (osModule.cpus && osModule.cpus() && osModule.cpus().length) ? osModule.cpus().length : 12;
     const hostRam  = Math.round(osModule.totalmem() / (1024 * 1024 * 1024));
-    const cpu = hardwareConcurrency || hostCpus;
-    const ram = deviceMemory        || (hostRam >= 24 ? 32 : (hostRam >= 16 ? 16 : 8));
 
-    // Screen — default to 1920x1080 to match physical display and avoid getter tampering
-    const resKey = resolution || '1920x1080';
+    let cpu = hardwareConcurrency;
+    if (!cpu) {
+        if (isRandom) {
+            const cpuChoices = [4, 6, 8, 8, 8, 12, 16];
+            cpu = cpuChoices[pseudoRandom(seed + 'cpu', cpuChoices.length)];
+        } else {
+            cpu = hostCpus;
+        }
+    }
+
+    let ram = deviceMemory;
+    if (!ram) {
+        if (isRandom) {
+            if (cpu <= 4) {
+                ram = [4, 8][pseudoRandom(seed + 'ram', 2)];
+            } else if (cpu <= 6) {
+                ram = [8, 16][pseudoRandom(seed + 'ram', 2)];
+            } else if (cpu <= 8) {
+                ram = [8, 16, 32][pseudoRandom(seed + 'ram', 3)];
+            } else {
+                ram = [16, 32, 64][pseudoRandom(seed + 'ram', 3)];
+            }
+        } else {
+            ram = (hostRam >= 24 ? 32 : (hostRam >= 16 ? 16 : 8));
+        }
+    }
+
+    // Screen Resolution
+    let resKey = resolution;
+    if (!resKey) {
+        if (isRandom) {
+            resKey = RESOLUTION_CHOICES[pseudoRandom(seed + 'res', RESOLUTION_CHOICES.length)];
+        } else {
+            resKey = '1920x1080';
+        }
+    }
     const screen = SCREEN_RESOLUTIONS[resKey] || SCREEN_RESOLUTIONS['1920x1080'];
-    const dpr = osType === 'windows11' ? 1.25 : 1.0;
+
+    let dpr = 1.0;
+    if (screen.width >= 2560) {
+        dpr = [1.25, 1.5, 2.0][pseudoRandom(seed + 'dpr', 3)];
+    } else if (screen.width === 1920) {
+        dpr = (osType === 'windows11') ? 1.25 : 1.0;
+    } else {
+        dpr = 1.0;
+    }
 
     // Window = viewport (slightly smaller than screen, realistic)
     const innerWidth  = Math.floor(screen.width  * 0.78);
     const innerHeight = Math.floor(screen.height * 0.80);
 
-    // ── GPU (default to host AMD Radeon GPU for 100% Worker OffscreenCanvas match) ──
-    const gpuProfile = options.gpu || GPU_PROFILES[0];
+    // ── GPU ──
+    let gpuProfile = options.gpu;
+    if (!gpuProfile) {
+        if (isRandom) {
+            gpuProfile = GPU_PROFILES[pseudoRandom(seed + 'gpu', GPU_PROFILES.length)];
+        } else {
+            gpuProfile = GPU_PROFILES[0];
+        }
+    }
 
     // ── Geo / Language (IP-first) ──
     const countryCode = (ipData.countryCode || ipData.country || 'US').toUpperCase();

@@ -244,6 +244,18 @@ Item {
                     root.profile.ip_last_tested  = (new Date()).toISOString()
 
                     if (!root.isNew && root.profileId && typeof profileManager !== 'undefined') {
+                        var pStr = proxyInput.text ? proxyInput.text.trim() : ""
+                        if (pStr) {
+                            var parsed = profileManager.parseProxy(pStr)
+                            profileManager.updateProfile(root.profileId, {
+                                proxy_string:   pStr,
+                                proxy_type:     parsed.proxy_type     || "none",
+                                proxy_host:     parsed.proxy_host     || "",
+                                proxy_port:     parsed.proxy_port     || 0,
+                                proxy_username: parsed.proxy_username || "",
+                                proxy_password: parsed.proxy_password || ""
+                            })
+                        }
                         profileManager.saveIpResult(root.profileId, ipData)
                     }
 
@@ -837,15 +849,14 @@ Item {
                                     enabled: !root.fpGenerating
                                     onClicked: {
                                         root.fpGenerating = true
-                                        // Use actual profileId if available (for determinism across sessions)
-                                        // Use timestamp-based ID only for brand-new unsaved profiles
-                                        var fpId = root.profileId || ("new_" + Date.now())
+                                        // Random seed for every click to guarantee fresh randomization
+                                        var fpId = (root.profileId || "new") + "_" + Date.now() + "_" + Math.floor(Math.random() * 100000)
                                         ipcClient.send("generate_fp", {
                                             profileId:           fpId,
                                             osType:              ["windows10","windows11","linux"][osSelector.currentIndex],
-                                            randomize:           true,   // randomize GPU/screen/audio
-                                            hardwareConcurrency: parseInt(cpuCombo.currentText) || null,
-                                            deviceMemory:        parseInt(ramCombo.currentText) || null,
+                                            randomize:           true,   // randomize GPU/screen/hardware
+                                            hardwareConcurrency: null,   // let generator randomize hardware
+                                            deviceMemory:        null,   // let generator randomize hardware
                                             resolution:          null,   // fully random resolution
                                             noiseLevel:          Math.round(noiseSlider.value),
                                             ipData: {
@@ -946,7 +957,7 @@ Item {
                                     FieldLabel { text: "CPU Cores" }
                                     ComboBoxStyled {
                                         id: cpuCombo
-                                        model: ["2", "4", "6", "8", "12", "16"]
+                                        model: ["2", "4", "6", "8", "10", "12", "16", "24", "32"]
                                         currentIndex: 3   // default 8
                                         width: 100
                                     }
@@ -957,7 +968,7 @@ Item {
                                     FieldLabel { text: "RAM (GB)" }
                                     ComboBoxStyled {
                                         id: ramCombo
-                                        model: ["2", "4", "8", "16"]
+                                        model: ["2", "4", "8", "16", "32", "64"]
                                         currentIndex: 2   // default 8
                                         width: 100
                                     }

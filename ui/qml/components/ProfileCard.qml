@@ -17,6 +17,7 @@ Rectangle {
     property string countryCode: ""     // e.g. "US"
     property int    riskScore:  -1      // -1 = not tested, 0-100
     property string lastUsed:   ""
+    readonly property bool hasProxy: (proxy !== "" && proxy !== "none") || (exitIp !== "") || (proxyType !== "" && proxyType !== "none")
 
     signal launchClicked(string profileId)
     signal stopClicked(string profileId)
@@ -256,13 +257,14 @@ Rectangle {
                 Text {
                     text: proxyTypeIcon(proxyType)
                     font.pixelSize: 11
-                    color: proxy !== "" ? accent : textSub
+                    color: hasProxy ? accent : textSub
                     anchors.verticalCenter: parent.verticalCenter
                 }
                 Text {
-                    text: proxy !== "" ? proxyType.toUpperCase() + " · " + proxyHost()
-                                       : "No proxy configured"
-                    color: proxy !== "" ? textPrimary : textSub
+                    text: hasProxy
+                          ? ((proxyType && proxyType !== "none" ? proxyType.toUpperCase() : "PROXY") + " · " + proxyHost())
+                          : "No proxy configured"
+                    color: hasProxy ? textPrimary : textSub
                     font { pixelSize: 11; family: "Consolas" }
                     elide: Text.ElideRight
                     width: card.width - 80
@@ -412,7 +414,7 @@ Rectangle {
     }
 
     function proxyTypeIcon(t) {
-        if (!t || t === "none") return "⛔"
+        if (!hasProxy) return "⛔"
         if (t === "socks5") return "🔒"
         if (t === "socks4") return "🔑"
         if (t === "http" || t === "https") return "🌐"
@@ -421,9 +423,11 @@ Rectangle {
     }
 
     function proxyHost() {
-        if (!proxy) return ""
-        // Extract host:port from full proxy string
         let p = proxy
+        if (!p) {
+            return exitIp || ""
+        }
+        // Extract host:port from full proxy string
         // Strip protocol prefix
         p = p.replace(/^(https?|socks[45]|ssh):\/\//i, "")
         // Strip user:pass@

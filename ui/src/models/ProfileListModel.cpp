@@ -61,13 +61,43 @@ QVariant ProfileListModel::data(const QModelIndex& index, int role) const
     switch (role) {
     case IdRole:          return p["id"].toString();
     case NameRole:        return p["name"].toString();
-    case ProxyRole:       return p["proxy"].toString();
-    case ProxyTypeRole:   return p["proxy_type"].toString();
+    case ProxyRole: {
+        QString proxy = p["proxy_string"].toString();
+        if (proxy.isEmpty()) {
+            QString host = p["proxy_host"].toString();
+            if (!host.isEmpty()) {
+                int port = p["proxy_port"].toInt();
+                proxy = port > 0 ? (host + ":" + QString::number(port)) : host;
+            }
+        }
+        if (proxy.isEmpty()) {
+            proxy = p["ip_address"].toString();
+        }
+        return proxy;
+    }
+    case ProxyTypeRole: {
+        QString ptype = p["proxy_type"].toString();
+        if ((ptype.isEmpty() || ptype == "none") && (!p["proxy_host"].toString().isEmpty() || !p["ip_address"].toString().isEmpty())) {
+            ptype = "http";
+        }
+        return ptype;
+    }
     case StatusRole:      return p["status"].toInt();
     case CreatedAtRole:   return p["created_at"].toString();
     case OsTypeRole:      return p["os_type"].toString("windows10");
     case IpAddressRole:   return p["ip_address"].toString();
-    case CountryFlagRole: return p["ip_country_flag"].toString();
+    case CountryFlagRole: {
+        QString code = p["ip_country_code"].toString().trimmed().toUpper();
+        if (code.length() == 2 && code[0] >= 'A' && code[0] <= 'Z' && code[1] >= 'A' && code[1] <= 'Z') {
+            QString flag;
+            flag.append(QChar(0xD83C));
+            flag.append(QChar(0xDDE6 + (code[0].toLatin1() - 'A')));
+            flag.append(QChar(0xD83C));
+            flag.append(QChar(0xDDE6 + (code[1].toLatin1() - 'A')));
+            return flag;
+        }
+        return p["ip_country_flag"].toString();
+    }
     case CountryCodeRole: return p["ip_country_code"].toString();
     case RiskScoreRole:   return p["ip_score"].toInt(-1);
     case LastUsedAtRole:  return p["last_used_at"].toString();
