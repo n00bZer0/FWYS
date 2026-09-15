@@ -194,7 +194,13 @@ QStringList BrowserLauncher::buildChromiumArgs(const QJsonObject& profile, int d
         // Use system keyring for nothing
         << "--use-mock-keychain"
         // No crash reporter
-        << "--disable-breakpad";
+        << "--disable-breakpad"
+        // DNS leak prevention: disable prefetch DNS so queries go through proxy
+        << "--dns-prefetch-disable"
+        // No QUIC: QUIC (HTTP/3) uses UDP and can bypass proxy/expose real IP
+        << "--disable-quic"
+        // No speculative DNS/preconnect (sends DNS before proxy is ready)
+        << "--no-network-profile-warning";
 
     // ── P0: FWYS fingerprint flags (custom Chromium patches) ────────────
     args
@@ -215,12 +221,21 @@ QStringList BrowserLauncher::buildChromiumArgs(const QJsonObject& profile, int d
         << "--fwys-ua-platform-version=10.0.0"
         << QString("--fwys-ua-full-version=%1").arg(chromeFull);
 
-    // WebRTC: filter local IP so proxy exit IP shows, only block if explicitly configured
+    // WebRTC IP handling policy
+    // When proxy is configured: force ALL WebRTC through proxy (C++ level, unbypassable)
+    // When no proxy: block non-proxied UDP so real IP never leaks
     QString webrtcMode = fpStr_("webrtc.mode", fpStr_("webrtc_mode", "filter_local"));
     if (webrtcMode == "block") {
+        // Explicit block mode — disable WebRTC entirely
         args << "--fwys-block-webrtc"
              << "--force-webrtc-ip-handling-policy=disable_non_proxied_udp";
+    } else if (proxyType != "none" && !proxyHost.isEmpty() && proxyPort > 0) {
+        // Proxy is configured — force WebRTC through proxy so STUN sees exit IP, not real IP
+        // disable_non_proxied_udp = Chrome will only use proxy-routed UDP for WebRTC
+        args << "--fwys-webrtc-filter-local"
+             << "--force-webrtc-ip-handling-policy=disable_non_proxied_udp";
     } else {
+        // No proxy — filter local IPs via JS, no UDP block (direct connection is fine)
         args << "--fwys-webrtc-filter-local";
     }
 

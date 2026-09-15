@@ -143,9 +143,11 @@ Object.defineProperty(uaDataObj.getHighEntropyValues, 'toString', {
   configurable: true,
 });
 
-if (!navigator.userAgentData) {
-  defNavProto('userAgentData', () => uaDataObj);
-}
+// ── ALWAYS override userAgentData — even if native exists ─────────────────
+// System Chrome has native userAgentData returning the real binary version.
+// Old code: if (!navigator.userAgentData) → skips injection on system Chrome.
+// Fix: unconditionally override on Navigator.prototype so our brands always win.
+defNavProto('userAgentData', () => uaDataObj);
 
 // ─────────────────────────────────────────────────────────────────────────
 // Timezone: Handled natively at Chromium ICU level via CDP page.emulateTimezone
