@@ -59,7 +59,9 @@ async function main() {
 
     try {
       const profile     = await ProfileReader.load(profileId);
-      const fingerprint = FingerprintGenerator.fromProfile(profile);
+      // Pass profile.ipData so WebRTC filter gets the proxy exit IP
+      // ipData is stored on the profile after a successful proxy test
+      const fingerprint = FingerprintGenerator.fromProfile(profile, profile.ipData || null);
 
       const cdp = new CDPManager(profileId, chromiumPath, debugPort, fingerprint);
       await cdp.connect();

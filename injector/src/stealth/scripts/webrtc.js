@@ -60,8 +60,11 @@ function PatchedRTCPeerConnection(config, constraints) {
     const ip = extractIP(candStr);
 
     if (isMdns(ip)) {
-      // If we have a proxy public IP, we can also upgrade mDNS/srflx to proxy IP
-      return origCand;
+      // mDNS candidates (.local) hide local IP but still reveal local network presence.
+      // If we have a proxy public IP, suppress the mDNS candidate entirely — we'll
+      // emit the proxy IP candidate instead via the fallback synthesizer.
+      // If no proxy IP, suppress too (fail-safe — better silent than leaking).
+      return null;
     }
 
     if (isPrivateIP(ip)) {
@@ -80,12 +83,13 @@ function PatchedRTCPeerConnection(config, constraints) {
           return origCand;
         }
       }
-      // If no proxy IP, drop private candidate
+      // No proxy IP — drop private candidate (fail-safe)
       return null;
     }
 
+    // Public IP candidate (e.g. real ISP IP from STUN server)
     if (proxyPublicIp && ip && ip !== proxyPublicIp) {
-      // Replace non-matching public IP (e.g. real ISP IP leaked via STUN) with proxy exit IP!
+      // Replace non-matching public IP with proxy exit IP
       candStr = candStr.replace(ip, proxyPublicIp);
       hasEmittedPublic = true;
       try {
@@ -98,6 +102,13 @@ function PatchedRTCPeerConnection(config, constraints) {
       } catch (e) {
         return origCand;
       }
+    }
+
+    if (!proxyPublicIp && ip) {
+      // Fail-safe: proxy IP unknown — block ALL IP-exposing candidates
+      // to avoid any leak. The synthesizer will emit a null-candidate to
+      // signal gathering is complete without revealing real IPs.
+      return null;
     }
 
     if (ip === proxyPublicIp) {

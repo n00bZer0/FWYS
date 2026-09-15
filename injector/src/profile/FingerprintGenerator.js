@@ -21,10 +21,10 @@ const GPU_PROFILES = [
   { vendor: 'Google Inc. (Intel)', renderer: 'ANGLE (Intel, Intel(R) Iris(R) Xe Graphics Direct3D11 vs_5_0 ps_5_0)' },
 ];
 
-// Real UA strings (Windows Chrome)
+// Real UA strings (Windows Chrome) — locked to Chrome 153 to match binary
+// NEVER add older versions here: UA vs detected-version mismatch is a hard fingerprint fail
 const UA_TEMPLATES = [
-  { ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.8010.36 Safari/537.36', version: '153' },
-  { ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.7977.82 Safari/537.36',  version: '152' },
+  { ua: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.8010.36 Safari/537.36', version: '153', fullVersion: '153.0.8010.36' },
 ];
 
 const HW_CONCURRENCY_OPTIONS = [4, 6, 8, 10, 12, 16];
@@ -50,12 +50,23 @@ class FingerprintGenerator {
    * @param {object} profile - profile object with id and user overrides
    * @returns {object} fingerprint config
    */
-  static fromProfile(profile) {
+  static fromProfile(profile, ipData = null) {
     const seed = FingerprintGenerator._seedFromId(profile.id);
 
     // If profile has manual overrides, apply them on top
     const generated = FingerprintGenerator._generate(seed);
-    return { ...generated, ...(profile.fingerprint_overrides || {}) };
+    const merged = { ...generated, ...(profile.fingerprint_overrides || {}) };
+
+    // Inject proxy public IP for WebRTC leak prevention
+    // ipData can come from profile.ipData or be passed explicitly after proxy test
+    const ip = (ipData && ipData.ip) || (profile.ipData && profile.ipData.ip) || '';
+    if (ip) {
+      merged.publicIp = ip;
+      merged.webrtc = { ...( merged.webrtc || {}), mode: merged.webrtc_mode || 'filter_local', publicIp: ip };
+      merged.meta = { ...(merged.meta || {}), ipSource: ip };
+    }
+
+    return merged;
   }
 
   /**
@@ -103,6 +114,7 @@ class FingerprintGenerator {
       user_agent: ua.ua,
       ua_brand: 'Google Chrome',
       ua_version: ua.version,
+      ua_full_version: ua.fullVersion || '153.0.8010.36',
       ua_platform: 'Windows',
       platform: 'Win32',
       webgl_vendor: gpu.vendor,
@@ -120,6 +132,9 @@ class FingerprintGenerator {
       vendor: 'Google Inc.',
       max_touch_points: 0,
       webrtc_mode: 'filter_local', // 'allow' | 'filter_local' | 'block'
+      // publicIp is set by fromProfile() after proxy resolution — leave empty here
+      publicIp: '',
+      webrtc: { mode: 'filter_local', publicIp: '' },
       proxy: null,
     };
   }
